@@ -218,25 +218,58 @@ export LESS_TERMCAP_ue=$'\E[0m'
 # Aliases
 # --------------------------------------------------------
 
+# Safer file operations
+alias rm='rm -i'
+alias cp='cp -i'
+alias mv='mv -i'
+
+# Colorful and detailed ls
 alias ls='ls --color=auto'
-alias grep='grep --color=auto'
-alias fgrep='fgrep --color=auto'
-alias egrep='egrep --color=auto'
-alias diff='diff --color=auto'
-alias ip='ip --color=auto'
 alias ll='ls --color=auto -rthla'
 alias lll='ls --color=auto -lh --group-directories-first'
 alias la='ls --color=auto -A'
 alias l='ls --color=auto -CF'
-alias rm='rm -i'
-alias mv='mv -i'
-alias cp='cp -i'
-alias c='clear'
-alias myip='curl checkip.amazonaws.com'
+alias lt='ls --color=auto -ltrh'
+
+# Networking tools
+alias ip='ip --color=auto'
+alias myip='curl -s checkip.amazonaws.com'
 alias ports='sudo lsof -i -P -n | grep LISTEN'
+
+# Grep, diff, etc.
+alias grep='grep --color=auto'
+alias egrep='grep -E --color=auto'
+alias fgrep='grep -F --color=auto'
+alias diff='diff --color=auto'
+
+# Python
 alias py='python3'
 alias ipy='ipython3'
+alias pip='pip3'
+
+# Navigation
+alias ..='cd ..'
+alias ...='cd ../..'
+
+# System updates (Kali/apt)
 alias u='sudo apt update && sudo apt full-upgrade -y && sudo apt autoremove -y && sudo apt autoclean -y && sudo apt clean && sudo apt dist-upgrade -y'
+
+# Miscellaneous
+alias c='clear'
+alias q='exit'
+alias mkd='mkdir -p'
+alias path='print -l $path'
+alias g='git'
+alias v='vim'
+alias h='history'
+
+# --------------------------------------------------------
+# Editor & Pager
+# --------------------------------------------------------
+
+export EDITOR=vim
+export VISUAL=vim
+export PAGER=less
 
 # --------------------------------------------------------
 # Plugins and Extras
@@ -256,6 +289,11 @@ fi
 # Load optional aliases
 [[ -f ~/.zsh_aliases ]] && source ~/.zsh_aliases
 
+```
+
+Test and set:
+```bash
+source ~/.zshrc
 ```
 
 After you `sudo su`  for root
