@@ -1,11 +1,18 @@
 # VIM
 ---
 
-Create config
+Set up the directory
+```bash
+mkdir -p ~/.vim/pack/themes/start
+git clone https://github.com/joshdick/onedark.vim ~/.vim/pack/themes/start/onedark.vim
+```
+
+Make vimrc file:
 ```bash
 vim ~/.vimrc
 ```
-Paste into ~/.vimrc
+
+Paste inside `.vimrc`
 ```bash
 " Enable syntax highlighting
 syntax on
