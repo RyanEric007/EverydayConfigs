@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cybersecurity Info</title>
+    <style>
+        /* Dark mode styling */
+        body {
+            background-color: #121212;
+            color: #e0e0e0;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            text-align: center;
+        }
+        h1 {
+            color: #ff4081;
+        }
+        .info {
+            margin-top: 20px;
+            background: #1e1e1e;
+            border: 1px solid #333;
+            padding: 20px;
+            border-radius: 10px;
+            width: 90%;
+            max-width: 600px;
+        }
+        button {
+            background-color: #ff4081;
+            border: none;
+            color: #fff;
+            padding: 10px 20px;
+            font-size: 1rem;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        button:hover {
+            background-color: #ff616f;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Cybersecurity Insights</h1>
+        <p>Click the button below to see information about your connection.</p>
+        <button onclick="fetchUserInfo()">Show My Info</button>
+        <div class="info" id="info">
+            <p>Your info will appear here...</p>
+        </div>
+    </div>
+    <script>
+        async function fetchUserInfo() {
+            const infoDiv = document.getElementById("info");
+            infoDiv.innerHTML = "<p>Loading your info...</p>";
+            try {
+                const response = await fetch("https://ipapi.co/json/");
+                if (!response.ok) throw new Error("Unable to fetch data");
+                const data = await response.json();
+                infoDiv.innerHTML = `
+                    <p><strong>IP Address:</strong> ${data.ip}</p>
+                    <p><strong>City:</strong> ${data.city}</p>
+                    <p><strong>Region:</strong> ${data.region}</p>
+                    <p><strong>Country:</strong> ${data.country_name}</p>
+                    <p><strong>ISP:</strong> ${data.org}</p>
+                `;
+            } catch (error) {
+                infoDiv.innerHTML = `<p>Error: ${error.message}</p>`;
+            }
+        }
+    </script>
+</body>
+</html>
