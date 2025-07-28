@@ -23,8 +23,20 @@
 # ==========================================================
 
 
-import http.server, socketserver, os, sys, socket, argparse, threading, html, shutil, stat, subprocess, platform, signal, time, pwd, grp, cgi
+import http.server, socketserver, os, sys, socket, argparse, threading, html, shutil, stat, subprocess, platform, signal, time
 from urllib.parse import urlparse, parse_qs
+
+try:
+    import pwd, grp
+    HAS_UNIX = True
+except ImportError:
+    HAS_UNIX = False
+
+try:
+    import cgi
+    HAS_CGI = True
+except ImportError:
+    HAS_CGI = False
 
 DEFAULT_PORT = 9000
 DEFAULT_HASH = "md5"
