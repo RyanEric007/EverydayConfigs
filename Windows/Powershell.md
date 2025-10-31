@@ -1,41 +1,3 @@
-# PowerShell Profiles
-
----
-
-Check for PowerShell profiles:  
-```powershell
-$profile | Select-Object *
-```
-
----
-
-Create all PowerShell profile paths:  
-```powershell
-$PROFILE.PSObject.Properties.Value | % {
-    if (-not (Test-Path $_)) {
-        New-Item -ItemType File -Path $_ -Force
-    }
-}
-```
-
----
-
-Open all PowerShell profiles — Notepad:  
-```powershell
-$PROFILE | Select-Object * | % { notepad $_ }
-```
-
----
-
-Open all PowerShell profiles — VS Code:  
-```powershell
-$PROFILE | Select-Object * | % { code $_ }
-```
-
----
-
-PowerShell profile.ps1 file:  
-```powershell
 # =====================================
 # 🖥️ SYSTEM MANAGEMENT
 # =====================================
@@ -85,8 +47,12 @@ function ll {
         Format-Table Mode, LastWriteTime, Length, Name -AutoSize
 }
 
+# 'ip' - Get Local IP address from powrshell
+function ip {
+(Get-NetIPConfiguration -InterfaceAlias "Wi-Fi").IPv4Address.IPAddress
+}
+
 # 'myip' - Get public IP address from AWS checkip service
 function myip {
     (Invoke-WebRequest 'https://checkip.amazonaws.com').Content.Trim()
 }
-```
