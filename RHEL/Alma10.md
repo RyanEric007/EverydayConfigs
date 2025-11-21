@@ -1,4 +1,4 @@
-# New `.bashrc` file 
+# New `.bashrc` file for Alma 10
 
 ## Backup the existing profile and create the new one
 ```sh
