@@ -1,3 +1,10 @@
+Backup the existing profile and create the new one
+```sh
+mv ~/.bashrc ~/.bashrc.bak && vim ~/.bashrc
+```
+
+## .bashrc
+```bash
 # ~/.bashrc - Optimized for AlmaLinux 10
 
 # --------------------------------------------------------
@@ -195,3 +202,4 @@ if ! shopt -oq posix; then
         . /usr/share/bash-completion/bash_completion
     fi
 fi
+```
