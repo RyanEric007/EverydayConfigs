@@ -203,3 +203,13 @@ if ! shopt -oq posix; then
     fi
 fi
 ```
+
+Test and set:
+```bash
+source ~/.bashrc
+```
+
+Then use `sudo su` to switch to root at current path and use:
+```sh
+cp .bashrc ~/.bashrc && source ~/.bashrc
+```
