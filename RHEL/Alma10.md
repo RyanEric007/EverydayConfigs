@@ -1,12 +1,3 @@
-# New `.bashrc` file for Alma 10
-
-## Backup the existing profile and create the new one
-```sh
-mv ~/.bashrc ~/.bashrc.bak && vim ~/.bashrc
-```
-
-## Paste the following into `.bashrc`
-```bash
 # ~/.bashrc - Optimized for AlmaLinux 10
 
 # --------------------------------------------------------
@@ -43,18 +34,18 @@ fi
 unset rc
 
 # --------------------------------------------------------
-# Shell options
+# Shell options & history settings
 # --------------------------------------------------------
 HISTCONTROL=ignoreboth
+HISTSIZE=5000
+HISTFILESIZE=10000
+HISTFILE="$HOME/.bash_history"
+
 shopt -s histappend
 shopt -s checkwinsize
 shopt -s globstar
 
-HISTSIZE=2000
-HISTFILESIZE=4000
-
 alias h='history'
-alias history='history 0'
 
 # --------------------------------------------------------
 # Lesspipe (Alma uses lesspipe.sh)
@@ -122,9 +113,11 @@ else
     PS1='${CHROOT_NAME:+($CHROOT_NAME)}\u@\h:\w\$ '
 fi
 
-# Optional newline before prompt
+# --------------------------------------------------------
+# PROMPT_COMMAND: newline + save history each command
+# --------------------------------------------------------
 if [ "$NEWLINE_BEFORE_PROMPT" = yes ]; then
-    PROMPT_COMMAND='echo'
+    PROMPT_COMMAND='history -a; history -n; echo'
 fi
 
 # Toggle prompt (Ctrl+P)
@@ -178,7 +171,6 @@ alias path='echo $PATH | tr ":" "\n"'
 alias g='git'
 alias v='vim'
 
-# AlmaLinux update workflow (dnf)
 alias u='sudo dnf update -y && sudo dnf upgrade -y && sudo dnf autoremove -y && sudo dnf clean all'
 
 # --------------------------------------------------------
@@ -203,14 +195,3 @@ if ! shopt -oq posix; then
         . /usr/share/bash-completion/bash_completion
     fi
 fi
-```
-
-## Test and set `.bashrc`:
-```sh
-source ~/.bashrc
-```
-
-Then use `sudo su` to switch to root at current path and use:
-```sh
-cp .bashrc ~/.bashrc && source ~/.bashrc
-```
