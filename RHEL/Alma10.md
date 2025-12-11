@@ -121,11 +121,35 @@ else
 fi
 
 # --------------------------------------------------------
-# PROMPT_COMMAND: newline + save history each command
+# PROMPT_COMMAND: newline + save history each command + right-aligned timestamp
 # --------------------------------------------------------
-if [ "$NEWLINE_BEFORE_PROMPT" = yes ]; then
-    PROMPT_COMMAND='history -a; history -n; echo'
-fi
+__bash_prompt_command() {
+    local last_exit=$?
+
+    # write current session history and reload new lines
+    history -a
+    history -n
+
+    # optional blank line before the prompt
+    if [ "$NEWLINE_BEFORE_PROMPT" = yes ]; then
+        printf '\n'
+    fi
+
+    # compute right-aligned timestamp for the current line
+    local ts ts_len cols col
+    ts="$(date '+%Y-%m-%d %H:%M:%S')"
+    ts_len=${#ts}
+    cols=${COLUMNS:-80}
+    col=$((cols - ts_len + 1))
+    (( col < 1 )) && col=1
+
+    # move to column 'col', print timestamp, then return to column 1
+    printf '\e[%dG%s\r' "$col" "$ts"
+
+    return "$last_exit"
+}
+
+PROMPT_COMMAND=__bash_prompt_command
 
 # Toggle prompt (Ctrl+P)
 toggle_oneline_prompt() {
