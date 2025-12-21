@@ -1,3 +1,6 @@
+# Powershell Profile
+
+```powershell
 # =====================================
 # 🖥️ SYSTEM MANAGEMENT
 # =====================================
@@ -56,3 +59,4 @@ function ip {
 function myip {
     (Invoke-WebRequest 'https://checkip.amazonaws.com').Content.Trim()
 }
+```
