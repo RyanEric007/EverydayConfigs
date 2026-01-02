@@ -72,9 +72,6 @@ tcp_connect_time_out 8000
 # Local exclusions (DO NOT proxy your LAN)
 # ----------------------------
 localnet 127.0.0.0/255.0.0.0
-localnet 10.0.0.0/255.0.0.0
-localnet 172.16.0.0/255.240.0.0
-localnet 192.168.0.0/255.255.0.0
 
 # ----------------------------
 # Proxy list (Tor)
