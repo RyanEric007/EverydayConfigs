@@ -6,22 +6,23 @@ With one proxy (Tor) in the list, random_chain vs dynamic_chain makes zero diffe
 ### Prerequisite
 
 Install:
+
 ```sh
 sudo apt install -y tor proxychains4 torsocks curl
 ```
 
 Enable -> Start -> Enable -> Info:
-```sh
 
+```sh
+sudo systemctl start tor
+sudo systemctl enable tor
+sudo systemctl status tor --no-pager
+sudo ss -lntp | grep -E '(:9050|tor)'
 ```
 
 ### Step 1 — Pack it up (backup the config)
 
 Copy-paste:
-sudo systemctl start tor
-sudo systemctl enable tor
-sudo systemctl status tor --no-pager
-sudo ss -lntp | grep -E '(:9050|tor)'
 
 ```sh
 sudo cp -a /etc/proxychains4.conf /etc/proxychains4.conf.bak.$(date +%F-%H%M%S)
