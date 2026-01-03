@@ -5,6 +5,11 @@
 # 🖥️ SYSTEM MANAGEMENT
 # =====================================
 
+# 'winget' - connects the app to cli
+function winget {
+  & "C:\Program Files\WindowsApps\Microsoft.DesktopAppInstaller_1.27.350.0_x64__8wekyb3d8bbwe\winget.exe" @args
+}
+
 # 'u' - Upgrade all packages via winget, including unknown sources
 function u {
     winget upgrade --all --include-unknown
@@ -48,11 +53,6 @@ function ll {
     Get-ChildItem -Force |
         Sort-Object LastWriteTime -Descending |
         Format-Table Mode, LastWriteTime, Length, Name -AutoSize
-}
-
-# 'ip' - Get Local IP address from powrshell
-function ip {
-(Get-NetIPConfiguration -InterfaceAlias "Wi-Fi").IPv4Address.IPAddress
 }
 
 # 'myip' - Get public IP address from AWS checkip service
