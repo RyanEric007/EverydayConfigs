@@ -94,7 +94,7 @@ Run this once (Tor already running):
 Enable “global” torsocks for commands you run in this shell:
 
 ```sh
-sudo torsocks on
+. torsocks on
 ```
 
 Try commands:
@@ -112,7 +112,7 @@ proxychains -q curl -s https://checkip.amazonaws.com ; echo
 Turn off when done:
 
 ```sh
-sudo torsocks off
+. torsocks off
 ```
 
 ### Proxy Chain
