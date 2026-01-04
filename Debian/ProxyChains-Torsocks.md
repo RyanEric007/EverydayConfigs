@@ -154,6 +154,11 @@ unset TORSOCKS_ISOLATE
 sudo kill -HUP $(pidof tor)
 ```
 
+Also a one liner:
+```sh
+TORSOCKS_ISOLATE=1 torsocks curl https://api.ipify.org
+```
+
 ---
 
 ### Proxy Chain
