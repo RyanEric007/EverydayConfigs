@@ -1,18 +1,17 @@
 ## ProxyChains and TorSocks
 
 ProxyChains alone cannot guarantee a new Tor exit IP on every run.
+
 With one proxy (Tor) in the list, random_chain vs dynamic_chain makes zero difference. Rotation is controlled by Tor, not ProxyChains.
 
 ### Prerequisite
 
-Install:
-
+Install required packages:
 ```sh
 sudo apt install -y tor proxychains4 torsocks curl
 ```
 
 Enable -> Start -> Enable -> Info:
-
 ```sh
 sudo systemctl start tor
 sudo systemctl enable tor
@@ -20,29 +19,26 @@ sudo systemctl status tor --no-pager
 sudo ss -lntp | grep -E '(:9050|tor)'
 ```
 
-### Step 1 — Pack it up (backup the config)
+### Step 1 — Backup the config
 
 Copy-paste:
-
 ```sh
 sudo cp -a /etc/proxychains4.conf /etc/proxychains4.conf.bak.$(date +%F-%H%M%S)
 ```
 
-Truncate with following command:
-
+Clear the file:
 ```sh
 sudo truncate -s 0 /etc/proxychains4.conf
 ```
 
-### Step 2 — The correct ProxyChains config (clean, tight, predictable)
+### Step 2 — Correct ProxyChains config
 
-Copy everything below and paste it into `/etc/proxychains4.conf`:
-
+Edit:
 ```sh
 sudo vim /etc/proxychains4.conf
 ```
 
-Copy-paste:
+Paste exactly this:
 
 ```sh
 # proxychains4.conf — Kali + Tor (CLI-safe, no DNS leaks)
@@ -52,8 +48,8 @@ Copy-paste:
 # ----------------------------
 dynamic_chain
 quiet_mode
-# random_chain does NOTHING with a single proxy
-# strict_chain breaks when Tor rotates
+# random_chain does nothing with a single proxy
+# strict_chain breaks when Tor circuits rotate
 # dynamic_chain is correct here
 
 # ----------------------------
@@ -69,7 +65,7 @@ tcp_read_time_out 15000
 tcp_connect_time_out 8000
 
 # ----------------------------
-# Local exclusions (DO NOT proxy your LAN)
+# Local exclusions
 # ----------------------------
 localnet 127.0.0.0/255.0.0.0
 
@@ -77,24 +73,57 @@ localnet 127.0.0.0/255.0.0.0
 # Proxy list (Tor)
 # ----------------------------
 [ProxyList]
-socks5  127.0.0.1 9050
+socks5 127.0.0.1 9050
 ```
 
-### Step 3 — How to ACTUALLY rotate IPs every use (the part people get wrong)
+**Important**:
 
-Reality:
-- Tor rotates circuits, not ProxyChains
-- New process ≠ new circuit
-- You must force isolation
+ProxyChains is now clean, quiet, and leak-safe.
+It still does not rotate IPs by itself.
 
-#### Correct tool for this job: torsocks
 
-Run this once (Tor already running):
+### Step 3 — Configure Tor for isolation (this is mandatory)
 
-Enable “global” torsocks for commands you run in this shell:
+Edit Tor’s config:
+```sh
+sudo vim /etc/tor/torrc
+```
 
+Add this line (anywhere):
+```sh
+SocksPort 9050 IsolateSOCKSAuth
+ControlPort 9051
+CookieAuthentication 1
+```
+
+Apply changes:
+```sh
+sudo systemctl restart tor
+```
+
+### Step 4 — Configure torsocks for per-process isolation
+
+Edit torsocks config:
+```sh
+sudo vim /etc/tor/torsocks.conf
+```
+
+Uncomment or add:
+```sh
+IsolatePID 1
+```
+
+### Step 5 — Use torsocks correctly (global mode)
+
+Enable torsocks in your current shell:
 ```sh
 . torsocks on
+```
+You should not see `LD_PRELOAD=""`
+
+Verify:
+```sh
+torsocks show
 ```
 
 Try commands:
@@ -110,17 +139,24 @@ proxychains -q curl -s https://checkip.amazonaws.com ; echo
 ```
 
 Turn off when done:
-
 ```sh
 . torsocks off
 ```
 
-### Proxy Chain
+Optional full cleanup:
 ```sh
-proxychains4 -q curl https://checkip.amazonaws.com
+unset LD_PRELOAD
+unset TORSOCKS_CONF_FILE
+unset TORSOCKS_ISOLATE
 ```
-
 ### Hard rotation
 ```sh
 sudo kill -HUP $(pidof tor)
+```
+
+---
+
+### Proxy Chain
+```sh
+proxychains4 -q curl https://checkip.amazonaws.com
 ```
