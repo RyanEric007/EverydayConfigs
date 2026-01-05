@@ -96,6 +96,14 @@ ControlPort 9051
 CookieAuthentication 1
 ```
 
+#### One-liner: add torsocks helpers to your shell rc file
+
+Copy–paste the following:
+```sh
+echo 'alias tor="LD_PRELOAD=/usr/lib/x86_64-linux-gnu/torsocks/libtorsocks.so"' >> "$HOME/.$(basename "$SHELL")rc"
+source "$HOME/.$(basename "$SHELL")rc"
+```
+
 Apply changes:
 ```sh
 sudo systemctl restart tor
