@@ -1,10 +1,43 @@
 # =====================================================
-# SSH CLIENT CONFIG — SECURE VM TEMPLATE
-# Purpose: Reusable, hardened baseline for all VMs
+# SSH CLIENT CONFIG — SECURE VM BASELINE
+# =====================================================
+# Purpose:
+#   Reusable, hardened OpenSSH client configuration
+#   Designed for Windows / Linux / macOS
+#
+# Notes:
+# - One key per VM or trust zone (recommended)
+# - Password authentication should be disabled server-side
+# - This file is safe to publish (no secrets)
 # =====================================================
 
 
-# ---------- Global defaults (define once) ----------
+# ---------- STRONG KEY GENERATION (REFERENCE) ----------
+# Create a modern, hardened Ed25519 key
+#
+# Linux / macOS:
+#   ssh-keygen -t ed25519 -a 100 -C "vm-name" -f ~/.ssh/keyname
+#
+# Windows (PowerShell):
+#   ssh-keygen -t ed25519 -a 100 -C "vm-name" -f %USERPROFILE%\.ssh\keyname
+#
+
+
+# ---------- KEY BOOTSTRAP HELPER (MANUAL USE ONLY) ----------
+# Sends your *public key* to a server that still allows password login.
+# SSH will NEVER auto-install keys — this is explicit and intentional.
+#
+# Windows (PowerShell):
+#   type %USERPROFILE%\.ssh\keyname.pub | ssh user@server-ip `
+#   "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+#
+# Linux / macOS:
+#   cat ~/.ssh/keyname.pub | ssh user@server-ip \
+#   "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+#
+
+
+# ---------- GLOBAL SSH DEFAULTS (DEFINE ONCE) ----------
 Host *
     # Key handling
     IdentitiesOnly yes
@@ -18,9 +51,9 @@ Host *
     StrictHostKeyChecking ask
     HashKnownHosts yes
 
-    # Connection stability (ENABLED BY DEFAULT)
+    # Connection stability (enabled by default)
     Compression yes
-    ServerAliveInterval 15
+    ServerAliveInterval 30
     ServerAliveCountMax 3
     TCPKeepAlive no
 
@@ -32,24 +65,13 @@ Host *
     AddKeysToAgent yes
 
 
-# ---------- Key bootstrap helper (MANUAL USE ONLY) ----------
-# Sends your *public key* to a server that still allows password login
-# Usage:
-#   cat ~/.ssh/keyname.pub | ssh user@server-ip \
-#   "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
-
+# =====================================================
+# HOST DEFINITIONS
+# =====================================================
 
 # ---------- VM HOST TEMPLATE ----------
 Host vm-name-here
     HostName 0.0.0.0
     User username
     Port 22
-
-    # One VM = one key (best practice)
     IdentityFile ~/.ssh/keyname-here
-
-    # Optional per-host overrides
-    # Compression no
-    # ServerAliveInterval 30
-    # Port 2222
-    # AddressFamily inet
