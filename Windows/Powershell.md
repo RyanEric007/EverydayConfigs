@@ -24,14 +24,8 @@ function eb {
 # 🐍 PYTHON UTILITIES
 # =====================================
 
-# 'cu' - Upgrade all Conda packages and clean up caches
-function cu {
-    conda upgrade --all -y
-    conda clean -a -y
-}
-
 # 'py' - Shortcut for launching Python 3
-function py { python3 }
+function py { python }
 
 # 'ipy' - Shortcut for launching IPython 3
 function ipy { ipython3 }
@@ -54,4 +48,10 @@ function ll {
 function myip {
     (Invoke-WebRequest 'https://checkip.amazonaws.com').Content.Trim()
 }
+
+# =====================================
+# 🚀 SESSION CLEANUP / STARTUP SANITIZATION
+# =====================================
+
+Clear-Host
 ```
