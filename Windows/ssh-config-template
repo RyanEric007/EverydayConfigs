@@ -1,0 +1,38 @@
+# =====================================================
+# SSH CLIENT CONFIG — SECURE VM TEMPLATE
+# =====================================================
+
+# ---------- Global defaults (recommended once) ----------
+Host *
+    IdentitiesOnly yes
+    PreferredAuthentications publickey
+    PubkeyAuthentication yes
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    GSSAPIAuthentication no
+
+    StrictHostKeyChecking yes
+    HashKnownHosts yes
+
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+    TCPKeepAlive no
+
+    Compression no
+    AddressFamily inet
+    LogLevel ERROR
+
+    AddKeysToAgent yes
+
+
+# ---------- VM HOST TEMPLATE ----------
+Host vm-name-here
+    HostName 0.0.0.0
+    User username
+    Port 22
+
+    IdentityFile ~/.ssh/keyname-here
+
+    # Compression yes
+    # ServerAliveInterval 15
+    # AddressFamily inet
