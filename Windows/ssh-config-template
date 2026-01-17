@@ -1,9 +1,12 @@
 # =====================================================
 # SSH CLIENT CONFIG — SECURE VM TEMPLATE
+# Purpose: Reusable, hardened baseline for all VMs
 # =====================================================
 
-# ---------- Global defaults (recommended once) ----------
+
+# ---------- Global defaults (define once) ----------
 Host *
+    # Key handling
     IdentitiesOnly yes
     PreferredAuthentications publickey
     PubkeyAuthentication yes
@@ -11,18 +14,29 @@ Host *
     KbdInteractiveAuthentication no
     GSSAPIAuthentication no
 
-    StrictHostKeyChecking yes
+    # Host key security (MITM protection)
+    StrictHostKeyChecking ask
     HashKnownHosts yes
 
-    ServerAliveInterval 30
+    # Connection stability (ENABLED BY DEFAULT)
+    Compression yes
+    ServerAliveInterval 15
     ServerAliveCountMax 3
     TCPKeepAlive no
 
-    Compression no
+    # Predictable behavior
     AddressFamily inet
     LogLevel ERROR
 
+    # Convenience (safe)
     AddKeysToAgent yes
+
+
+# ---------- Key bootstrap helper (MANUAL USE ONLY) ----------
+# Sends your *public key* to a server that still allows password login
+# Usage:
+#   cat ~/.ssh/keyname.pub | ssh user@server-ip \
+#   "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
 
 
 # ---------- VM HOST TEMPLATE ----------
@@ -31,8 +45,11 @@ Host vm-name-here
     User username
     Port 22
 
+    # One VM = one key (best practice)
     IdentityFile ~/.ssh/keyname-here
 
-    # Compression yes
-    # ServerAliveInterval 15
+    # Optional per-host overrides
+    # Compression no
+    # ServerAliveInterval 30
+    # Port 2222
     # AddressFamily inet
