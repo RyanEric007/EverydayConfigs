@@ -173,10 +173,12 @@ fi
 # Aliases
 # --------------------------------------------------------
 
+# Safer file operations
 alias rm='rm -i'
 alias cp='cp -i'
 alias mv='mv -i'
 
+# Colorful and detailed ls
 alias ls='ls --color=auto'
 alias ll='ls --color=auto -rthla'
 alias lll='ls --color=auto -lh --group-directories-first'
@@ -184,30 +186,38 @@ alias la='ls --color=auto -A'
 alias l='ls --color=auto -CF'
 alias lt='ls --color=auto -ltrh'
 
+# Networking tools
 alias ip='ip --color=auto'
 alias myip='curl -s checkip.amazonaws.com'
 alias ports='sudo lsof -i -P -n | grep LISTEN'
 
+# Grep, diff, etc.
 alias grep='grep --color=auto'
 alias egrep='grep -E --color=auto'
 alias fgrep='grep -F --color=auto'
 alias diff='diff --color=auto'
 
+# Python
 alias py='python3'
 alias ipy='ipython3'
 alias pip='pip3'
 
+# Navigation
 alias ..='cd ..'
 alias ...='cd ../..'
 
+# System updates (Kali/apt)
 alias u='sudo apt update && sudo apt full-upgrade -y && sudo apt autoremove -y && sudo apt autoclean -y && sudo apt clean && sudo apt dist-upgrade -y'
+alias n='sudo nala update && sudo nala upgrade -y --full && sudo nala autoremove && sudo nala clean'
 
+# Miscellaneous
 alias c='clear'
 alias q='exit'
 alias mkd='mkdir -p'
-alias path='echo $PATH | tr ":" "\n"'
+alias path='print -l $path'
 alias g='git'
 alias v='vim'
+alias h='history'
 
 # --------------------------------------------------------
 # Editor & Pager
