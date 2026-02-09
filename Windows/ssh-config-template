@@ -28,12 +28,10 @@
 # SSH will NEVER auto-install keys — this is explicit and intentional.
 #
 # Windows (PowerShell):
-#   type %USERPROFILE%\.ssh\keyname.pub | ssh user@server-ip `
-#   "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+#   type %USERPROFILE%\.ssh\keyname.pub | ssh user@server-ip "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
 #
 # Linux / macOS:
-#   cat ~/.ssh/keyname.pub | ssh user@server-ip \
-#   "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+#   cat ~/.ssh/keyname.pub | ssh user@server-ip "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
 #
 
 
@@ -41,9 +39,10 @@
 Host *
     # Key handling
     IdentitiesOnly yes
-    PreferredAuthentications publickey
+    IdentityFile ~/.ssh/id_ed25519
+    PreferredAuthentications publickey,password,keyboard-interactive
     PubkeyAuthentication yes
-    PasswordAuthentication no
+    PasswordAuthentication yes
     KbdInteractiveAuthentication no
     GSSAPIAuthentication no
 
