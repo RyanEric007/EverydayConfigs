@@ -25,7 +25,7 @@ function eb {
 # =====================================
 
 # 'py' - Shortcut for launching Python 3
-function py { python }
+function py { python3 }
 
 # 'ipy' - Shortcut for launching IPython 3
 function ipy { ipython3 }
