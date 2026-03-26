@@ -3,8 +3,8 @@
 
 Set up the directory
 ```bash
-mkdir -p ~/.vim/pack/themes/start
-git clone https://github.com/joshdick/onedark.vim ~/.vim/pack/themes/start/onedark.vim
+sudo mkdir -p /usr/share/vim/vimfiles/pack/themes/start
+sudo git clone https://github.com/joshdick/onedark.vim /usr/share/vim/vimfiles/pack/themes/start/onedark.vim
 ```
 
 Make vimrc file:
