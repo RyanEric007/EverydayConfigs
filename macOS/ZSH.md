@@ -152,6 +152,56 @@ if [[ $IS_ROOT -eq 0 ]]; then
     source /opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
 
 fi
+
+##### =========================================================
+##### 🔐 TAILSCALE UTILITIES
+##### =========================================================
+
+alias tailscale="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+
+tsips() {
+  printf "%-20s %-18s %-40s\n" "HOST" "IPv4" "IPv6"
+  printf "%-20s %-18s %-40s\n" "----" "----" "----"
+
+  tailscale status --json | jq -r '
+    .Peer
+    | to_entries[]
+    | [
+        .value.HostName,
+        (.value.TailscaleIPs[] | select(startswith("100."))),
+        (.value.TailscaleIPs[] | select(startswith("fd7a:")))
+      ]
+    | @tsv
+  ' | while IFS=$'\t' read -r host ipv4 ipv6; do
+      printf "%-20s %-18s %-40s\n" "$host" "$ipv4" "$ipv6"
+  done
+}
+
+tsme() {
+  printf "%-20s %-18s %-40s\n" "HOST" "IPv4" "IPv6"
+  printf "%-20s %-18s %-40s\n" "----" "----" "----"
+
+  tailscale status --json | jq -r '
+    .Self
+    | [
+        .HostName,
+        (.TailscaleIPs[] | select(startswith("100."))),
+        (.TailscaleIPs[] | select(startswith("fd7a:")))
+      ]
+    | @tsv
+  ' | while IFS=$'\t' read -r host ipv4 ipv6; do
+      printf "%-20s %-18s %-40s\n" "$host" "$ipv4" "$ipv6"
+  done
+}
+
+tsping() {
+  if [[ -z "$1" ]]; then
+    echo "Usage: tsping <hostname>"
+    return 1
+  fi
+
+  tailscale ping "$1"
+}
 ```
 
 ```
