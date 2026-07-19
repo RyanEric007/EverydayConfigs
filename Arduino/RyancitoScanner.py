@@ -6,27 +6,65 @@ import machine
 import ubinascii
 
 # ================== CONFIGURATION ==================
-USE_AP_MODE = False                   # True = AP Mode | False = Connect to your WiFi
-SSID = 'Enter_in_your_ssid'
-PASSWORD = 'And password'
+USE_AP_MODE = False
+SSID = 'pick_a_ssid'
+PASSWORD = 'choose-a-password'
 AP_SSID = 'Ryancito-Scanner'
-AP_PASSWORD = 'DontStealMyPassword' #obvous joke :p
+AP_PASSWORD = '1234'
 # ===================================================
 
-led = machine.Pin(48, machine.Pin.OUT)
+# RGB LED pins (Active LOW)
+led_r = machine.PWM(machine.Pin(46), freq=1000, duty=0)
+led_g = machine.PWM(machine.Pin(0),  freq=1000, duty=0)
+led_b = machine.PWM(machine.Pin(45), freq=1000, duty=0)
+
+def set_rgb(r, g, b):
+    """r, g, b from 0-255. Active LOW so we invert."""
+    led_r.duty(1023 - int(r * 4))   # 0-1023 range
+    led_g.duty(1023 - int(g * 4))
+    led_b.duty(1023 - int(b * 4))
+
+def led_off():
+    set_rgb(0, 0, 0)
 
 def blink_led(times=3, delay=0.2):
     for _ in range(times):
-        led.on()
+        set_rgb(0, 80, 255)   # Cyan
         time.sleep(delay)
-        led.off()
+        led_off()
         time.sleep(delay)
+
+def rainbow_scan(duration=1.8):
+    """Smooth rainbow while scanning"""
+    start = time.ticks_ms()
+    hue = 0
+    while time.ticks_diff(time.ticks_ms(), start) < duration * 1000:
+        h = hue % 360
+        if h < 60:
+            r, g, b = 255, int(255 * h / 60), 0
+        elif h < 120:
+            r, g, b = int(255 * (120 - h) / 60), 255, 0
+        elif h < 180:
+            r, g, b = 0, 255, int(255 * (h - 120) / 60)
+        elif h < 240:
+            r, g, b = 0, int(255 * (240 - h) / 60), 255
+        elif h < 300:
+            r, g, b = int(255 * (h - 240) / 60), 0, 255
+        else:
+            r, g, b = 255, 0, int(255 * (360 - h) / 60)
+
+        # Dim it a bit
+        set_rgb(r // 2, g // 2, b // 2)
+        hue += 10
+        time.sleep_ms(25)
+
+    led_off()
 
 # ====================== WiFi Setup ======================
 if USE_AP_MODE:
     wlan = network.WLAN(network.AP_IF)
     wlan.active(True)
-    wlan.ifconfig(('192.168.4.1', '255.255.255.0', '192.168.4.1', '192.168.4.1'))  # IP, Mask, Gateway, DNS
+    wlan.ifconfig(('10.11.12.1', '255.255.255.0', '10.11.12.1', '10.11.12.1'))
     wlan.config(ssid=AP_SSID, password=AP_PASSWORD, channel=6)
     print("🔥 AP Mode Started - SSID:", AP_SSID)
     print("IP:", wlan.ifconfig()[0])
@@ -64,6 +102,9 @@ while True:
             try:
                 request = cl.recv(1024).decode('utf-8', 'ignore')
 
+                # Rainbow while scanning
+                rainbow_scan(1.7)
+
                 ip = wlan.ifconfig()[0]
                 mac = ubinascii.hexlify(wlan.config('mac')).decode()
                 rssi = wlan.status('rssi') if not USE_AP_MODE else "N/A (AP)"
@@ -92,175 +133,78 @@ while True:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="color-scheme" content="dark">
     <title>Ryancito WiFi Scanner</title>
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-
         body {{
             background: #05070c;
             color: #00fff7;
             font-family: 'Courier New', monospace;
             min-height: 100vh;
-            overflow-x: hidden;
-            position: relative;
         }}
-
-        /* ===== Particle / Cyber Background ===== */
-        .particles {{
-            position: fixed;
-            inset: 0;
-            z-index: 0;
-            pointer-events: none;
-            background:
-                radial-gradient(circle at 20% 30%, rgba(0, 255, 247, 0.08) 0%, transparent 40%),
-                radial-gradient(circle at 80% 70%, rgba(0, 255, 247, 0.06) 0%, transparent 40%);
-        }}
-
-        .particles::before {{
-            content: "";
-            position: absolute;
-            inset: 0;
-            background-image:
-                radial-gradient(1.5px 1.5px at 10% 20%, #00fff7 100%, transparent),
-                radial-gradient(1.5px 1.5px at 30% 65%, #00fff7 100%, transparent),
-                radial-gradient(1.5px 1.5px at 50% 30%, #00fff7 100%, transparent),
-                radial-gradient(1.5px 1.5px at 70% 80%, #00fff7 100%, transparent),
-                radial-gradient(1.5px 1.5px at 90% 40%, #00fff7 100%, transparent),
-                radial-gradient(1px 1px at 15% 80%, #fff 100%, transparent),
-                radial-gradient(1px 1px at 45% 15%, #fff 100%, transparent),
-                radial-gradient(1px 1px at 75% 55%, #fff 100%, transparent);
-            background-size: 200% 200%;
-            animation: particleFloat 40s linear infinite;
-            opacity: 0.7;
-        }}
-
-        .particles::after {{
-            content: "";
-            position: absolute;
-            inset: 0;
-            background:
-                linear-gradient(rgba(0, 255, 247, 0.04) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(0, 255, 247, 0.04) 1px, transparent 1px);
-            background-size: 50px 50px;
-            animation: gridDrift 25s linear infinite;
-        }}
-
-        @keyframes particleFloat {{
-            0%   {{ background-position: 0% 0%; }}
-            100% {{ background-position: 100% 100%; }}
-        }}
-
-        @keyframes gridDrift {{
-            0%   {{ background-position: 0 0; }}
-            100% {{ background-position: 50px 50px; }}
-        }}
-
-        /* ===== Layout ===== */
         .site-header {{
-            position: relative;
-            z-index: 10;
             display: flex;
             justify-content: center;
-            align-items: center;
             padding: 18px 22px;
             border-bottom: 1px solid rgba(0, 255, 247, 0.15);
         }}
-
         .brand {{
             font-size: 1.5em;
             font-weight: 700;
             letter-spacing: 1.5px;
             color: #00fff7;
-            text-shadow: 0 0 12px #00fff7, 0 0 24px rgba(0, 255, 247, 0.4);
+            text-shadow: 0 0 12px #00fff7;
         }}
-
         .container {{
-            position: relative;
-            z-index: 5;
             max-width: 900px;
             margin: 0 auto;
             padding: 25px 16px 40px;
         }}
-
-        /* ===== Cards ===== */
         .card {{
-            background: rgba(10, 14, 22, 0.78);
+            background: rgba(10, 14, 22, 0.85);
             border: 1px solid rgba(0, 255, 247, 0.35);
             border-radius: 16px;
             padding: 24px;
             margin-bottom: 22px;
-            box-shadow: 0 0 30px rgba(0, 255, 247, 0.12);
-            backdrop-filter: blur(8px);
         }}
-
-        /* Connection Card */
-        .connection-card {{
-            text-align: center;
-        }}
-
+        .connection-card {{ text-align: center; }}
         .connection-card h2 {{
             color: #b967ff;
             font-size: 1.25em;
-            margin-bottom: 20px;
-            letter-spacing: 1px;
+            margin-bottom: 22px;
         }}
-
         .connection-info {{
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 12px 20px;
-            max-width: 420px;
+            gap: 16px 24px;
+            max-width: 440px;
             margin: 0 auto;
             text-align: left;
         }}
-
-        .connection-info p {{
-            margin: 0;
-            font-size: 1.05em;
-            line-height: 1.4;
-        }}
-
+        .connection-info p {{ margin: 0; font-size: 1.05em; }}
         .connection-info strong {{
             color: #b967ff;
             display: block;
             font-size: 0.85em;
-            margin-bottom: 2px;
-            letter-spacing: 0.5px;
+            margin-bottom: 3px;
         }}
-
-        /* Networks */
+        .ssid-full {{ grid-column: 1 / -1; }}
         h2.section-title {{
             color: #b967ff;
             font-size: 1.15em;
             margin-bottom: 16px;
-            letter-spacing: 0.5px;
         }}
-
-        .table-wrapper {{
-            overflow-x: auto;
-            -webkit-overflow-scrolling: touch;
-            border-radius: 10px;
-        }}
-
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.95em;
-        }}
-
+        .table-wrapper {{ overflow-x: auto; }}
+        table {{ width: 100%; border-collapse: collapse; font-size: 0.95em; }}
         th, td {{
             padding: 11px 10px;
             border-bottom: 1px solid rgba(0, 255, 247, 0.12);
             text-align: left;
         }}
-
         th {{
             color: #b967ff;
             background: rgba(185, 103, 255, 0.08);
         }}
-
-        /* Buttons */
         .btn-row {{
             display: flex;
             justify-content: center;
@@ -268,7 +212,6 @@ while True:
             flex-wrap: wrap;
             margin-top: 8px;
         }}
-
         .btn {{
             background: transparent;
             color: #00fff7;
@@ -278,67 +221,38 @@ while True:
             font-family: inherit;
             font-size: 1em;
             cursor: pointer;
-            transition: all 0.2s;
             min-width: 150px;
         }}
-
         .btn:hover {{
             background: #00fff7;
             color: #05070c;
-            box-shadow: 0 0 18px #00fff7;
         }}
-
-        /* Footer */
         .site-footer {{
             text-align: center;
             padding: 20px;
             font-size: 0.85em;
             color: rgba(0, 255, 247, 0.5);
-            position: relative;
-            z-index: 5;
         }}
-
-        /* Mobile */
         @media (max-width: 520px) {{
             .connection-info {{
                 grid-template-columns: 1fr;
-                gap: 14px;
                 text-align: center;
             }}
-            .connection-info strong {{
-                display: inline;
-                margin-right: 6px;
-            }}
-            .brand {{
-                font-size: 1.3em;
-            }}
+            .connection-info strong {{ display: inline; margin-right: 6px; }}
         }}
-
-        /* Print */
         @media print {{
             body {{ background: white; color: black; }}
-            .particles {{ display: none; }}
-            .card {{
-                background: white;
-                border: 1px solid #666;
-                box-shadow: none;
-                color: black;
-            }}
+            .card {{ background: white; border: 1px solid #666; color: black; }}
             th {{ background: #eee; color: black; }}
-            th, td {{ border-color: #999; color: black; }}
             .btn {{ display: none; }}
             .brand, h2 {{ color: black; text-shadow: none; }}
-            .site-footer {{ color: #666; }}
         }}
     </style>
 </head>
 <body>
-    <div class="particles"></div>
-
     <header class="site-header">
         <div class="brand">Ryancito Scanner</div>
     </header>
-
     <div class="container">
         <div class="card connection-card">
             <h2>Your Connection</h2>
@@ -347,38 +261,26 @@ while True:
                 <p><strong>MAC</strong>{mac}</p>
                 <p><strong>Signal</strong>{rssi} dBm</p>
                 <p><strong>Channel</strong>{channel}</p>
-                <p><strong>SSID</strong>{current_ssid}</p>
+                <p class="ssid-full"><strong>SSID</strong>{current_ssid}</p>
             </div>
         </div>
-
         <div class="card">
             <h2 class="section-title">Nearby Networks ({len(networks)} found)</h2>
             <div class="table-wrapper">
                 <table>
                     <thead>
-                        <tr>
-                            <th>SSID</th>
-                            <th>Signal</th>
-                            <th>Ch</th>
-                            <th>BSSID</th>
-                        </tr>
+                        <tr><th>SSID</th><th>Signal</th><th>Ch</th><th>BSSID</th></tr>
                     </thead>
-                    <tbody>
-                        {rows}
-                    </tbody>
+                    <tbody>{rows}</tbody>
                 </table>
             </div>
         </div>
-
         <div class="btn-row">
             <button class="btn" onclick="location.reload()">🔄 Refresh Scan</button>
             <button class="btn" onclick="window.print()">🖨️ Print</button>
         </div>
     </div>
-
-    <footer class="site-footer">
-        Ryancito WiFi Scanner
-    </footer>
+    <footer class="site-footer">Ryancito WiFi Scanner</footer>
 </body>
 </html>"""
 
