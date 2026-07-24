@@ -61,6 +61,8 @@ ble = bluetooth.BLE()
 devices = {}
 scan_done = False
 strongest_rssi = -127
+previous_ble_rssi = {}
+previous_wifi_rssi = {}
 
 _IRQ_SCAN_RESULT = const(5)
 _IRQ_SCAN_DONE = const(6)
@@ -219,6 +221,17 @@ def signal_bar(rssi):
     return "     "
 
 
+def signal_trend(previous_rssi, current_rssi):
+    if previous_rssi is None:
+        return "NEW", "trend-new"
+    change = current_rssi - previous_rssi
+    if change >= 4:
+        return "↑ CLOSER (+{} dB)".format(change), "trend-up"
+    if change <= -4:
+        return "↓ FARTHER ({} dB)".format(change), "trend-down"
+    return "→ STEADY ({:+d} dB)".format(change), "trend-steady"
+
+
 def proximity_from_rssi(rssi):
     if rssi < RSSI_15_FEET:
         return "Beyond ~15 ft", "off"
@@ -352,7 +365,7 @@ def ble_irq(event, data):
 
 
 def scan_devices():
-    global devices, scan_done, strongest_rssi
+    global devices, scan_done, strongest_rssi, previous_ble_rssi
     devices = {}
     scan_done = False
     strongest_rssi = -127
@@ -387,6 +400,14 @@ def scan_devices():
 
         result = list(devices.values())
         result.sort(key=lambda item: item["best_rssi"], reverse=True)
+        current_rssi = {}
+        for item in result:
+            label, style = signal_trend(
+                previous_ble_rssi.get(item["mac"]), item["best_rssi"])
+            item["trend"] = label
+            item["trend_style"] = style
+            current_rssi[item["mac"]] = item["best_rssi"]
+        previous_ble_rssi = current_rssi
         print("Found {} BLE devices.".format(len(result)))
         if result:
             zone = set_proximity_led(result[0]["best_rssi"])
@@ -403,6 +424,7 @@ def scan_devices():
 
 
 def scan_wifi_networks():
+    global previous_wifi_rssi
     print("Scanning for Wi-Fi networks...")
     gc.collect()
     try:
@@ -441,6 +463,14 @@ def scan_wifi_networks():
             print_exception("Bad Wi-Fi scan result:", e)
 
     found.sort(key=lambda item: item["rssi"], reverse=True)
+    current_rssi = {}
+    for item in found:
+        label, style = signal_trend(
+            previous_wifi_rssi.get(item["bssid"]), item["rssi"])
+        item["trend"] = label
+        item["trend_style"] = style
+        current_rssi[item["bssid"]] = item["rssi"]
+    previous_wifi_rssi = current_rssi
     print("Found {} Wi-Fi networks.".format(len(found)))
     return found[:MAX_NETWORKS], None
 
@@ -595,14 +625,20 @@ def build_device_rows(found):
         proximity, color = proximity_from_rssi(item["best_rssi"])
 
         rows.append(
-            "<tr>"
+            "<tr class='survey-row' data-device-id='ble:{}'>"
             "<td>{}</td><td>{}</td><td class='bar'>{}</td>"
+            "<td class='{}'>{}</td>"
             "<td><span class='dot {}'></span>{}</td>"
             "<td>{}</td><td>{}</td><td>{}</td><td>{}</td>"
+            "<td class='ignore-cell'><label><input class='ignore-box' "
+            "type='checkbox'> Ignore</label></td>"
             "</tr>".format(
+                html_escape(item["mac"]),
                 html_escape(name),
                 item["best_rssi"],
                 html_escape(signal_bar(item["best_rssi"])),
+                item["trend_style"],
+                html_escape(item["trend"]),
                 color,
                 html_escape(proximity),
                 item["seen"],
@@ -613,7 +649,7 @@ def build_device_rows(found):
         )
     if not rows:
         rows.append(
-            "<tr><td colspan='8' class='center'>No BLE devices found</td></tr>")
+            "<tr><td colspan='10' class='center'>No BLE devices found</td></tr>")
     return "".join(rows)
 
 
@@ -622,12 +658,19 @@ def build_wifi_rows(networks):
     for item in networks:
         hidden = " <span class='muted'>(hidden)</span>" if item["hidden"] else ""
         rows.append(
-            "<tr><td>{}{}</td><td>{}</td><td class='bar'>{}</td>"
-            "<td>{}</td><td>{}</td><td>{}</td></tr>".format(
+            "<tr class='survey-row' data-device-id='wifi:{}'>"
+            "<td>{}{}</td><td>{}</td><td class='bar'>{}</td>"
+            "<td class='{}'>{}</td>"
+            "<td>{}</td><td>{}</td><td>{}</td>"
+            "<td class='ignore-cell'><label><input class='ignore-box' "
+            "type='checkbox'> Ignore</label></td></tr>".format(
+                html_escape(item["bssid"]),
                 html_escape(item["ssid"]),
                 hidden,
                 item["rssi"],
                 html_escape(signal_bar(item["rssi"])),
+                item["trend_style"],
+                html_escape(item["trend"]),
                 item["channel"],
                 html_escape(item["security"]),
                 html_escape(item["bssid"]),
@@ -635,7 +678,7 @@ def build_wifi_rows(networks):
         )
     if not rows:
         rows.append(
-            "<tr><td colspan='6' class='center'>No Wi-Fi networks found</td></tr>")
+            "<tr><td colspan='8' class='center'>No Wi-Fi networks found</td></tr>")
     return "".join(rows)
 
 
@@ -681,31 +724,54 @@ th{{color:#b967ff;background:rgba(185,103,255,.1)}}
 .dot.green{{background:#2cff88;color:#2cff88}}
 .dot.blue{{background:#3f8cff;color:#3f8cff}}
 .dot.off{{background:#555;color:#555}}
+.trend-new{{color:#b967ff;font-weight:bold;white-space:nowrap}}
+.trend-up{{color:#2cff88;font-weight:bold;white-space:nowrap}}
+.trend-down{{color:#ff5c70;font-weight:bold;white-space:nowrap}}
+.trend-steady{{color:#00fff7;white-space:nowrap}}
+.ignore-tools{{text-align:right;margin:-4px 0 10px;font-size:.84em}}
+.ignored-row{{display:none}}
+.show-ignored .ignored-row{{display:table-row;opacity:.35}}
+.show-ignored .ignored-row td{{text-decoration:line-through}}
 .btn-row{{text-align:center;margin-top:10px}}
 .btn{{display:inline-block;text-decoration:none;color:#00fff7;border:2px solid #00fff7;padding:10px 22px;border-radius:8px;margin:5px;background:transparent;font-family:inherit;font-size:1em;cursor:pointer}}
 .footer{{text-align:center;padding:14px;font-size:.8em;opacity:.45}}
 @media(max-width:650px){{.status-grid{{grid-template-columns:1fr}}}}
+@page{{size:landscape;margin:.35in}}
 @media print{{
-body{{background:white!important;color:black!important}}
-.header{{color:black!important;text-shadow:none!important;border-color:#444!important}}
-.card{{background:white!important;border:1px solid #666!important;color:black!important}}
 *{{text-shadow:none!important;box-shadow:none!important}}
 body{{background:white!important;color:black!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}}
 .header{{color:black!important;text-shadow:none!important;border-color:black!important}}
 .card{{background:white!important;border:1px solid black!important;color:black!important}}
+html,body{{width:100%!important;margin:0!important;padding:0!important}}
+body{{background:white!important;color:black!important;font-size:8pt!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}}
+.header{{color:black!important;text-shadow:none!important;border-color:black!important;padding:6px!important;font-size:13pt!important}}
+.container{{max-width:none!important;width:100%!important;margin:0!important;padding:6px 0 0!important}}
+.card{{background:white!important;border:1px solid black!important;color:black!important;border-radius:0!important;padding:7px!important;margin-bottom:7px!important}}
 h2,.status-col strong{{color:#333!important}}
+h2{{font-size:10pt!important;margin-bottom:6px!important}}
+.status-grid{{gap:8px!important}}
+.status-col div{{margin-bottom:3px!important;font-size:8pt!important}}
 th{{background:#eee!important;color:black!important}}
-td,.bar{{color:black!important}}
 table{{border:1px solid black!important}}
 th,td{{color:black!important;border-bottom:1px solid black!important}}
+table{{border:1px solid black!important;width:100%!important;table-layout:auto!important;font-size:7pt!important}}
+thead{{display:table-header-group}}
+tr{{break-inside:avoid!important;page-break-inside:avoid!important}}
+th,td{{color:black!important;border-bottom:1px solid black!important;padding:3px 2px!important;overflow-wrap:anywhere!important;word-break:break-word!important}}
 .bar{{color:black!important}}
+.note{{margin:5px 0 0!important;font-size:7pt!important}}
+.legend{{margin:4px 0 6px!important;gap:8px!important;font-size:7pt!important}}
 .note,.muted,.footer{{color:black!important;opacity:1!important}}
+.footer{{padding:5px!important;font-size:7pt!important}}
 .dot{{border:1px solid black!important;box-shadow:none!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}}
 .dot.red{{background:#ff0000!important;color:#ff0000!important}}
 .dot.yellow{{background:#ffff00!important;color:#ffff00!important}}
 .dot.green{{background:#00b83f!important;color:#00b83f!important}}
 .dot.blue{{background:#0066ff!important;color:#0066ff!important}}
 .dot.off{{background:#777!important;color:#777!important}}
+.trend-new,.trend-up,.trend-down,.trend-steady{{color:black!important}}
+.ignore-cell,.ignore-tools{{display:none!important}}
+.ignored-row{{display:none!important}}
 .btn{{display:none!important}}
 }}
 </style>
@@ -737,9 +803,10 @@ th,td{{color:black!important;border-bottom:1px solid black!important}}
 
 <div class="card">
 <h2>Nearby Wi-Fi Networks ({wifi_count} found)</h2>
+<div class="ignore-tools"><label><input class="show-ignored-box" type="checkbox"> Show ignored</label></div>
 <div style="overflow-x:auto">
 <table>
-<thead><tr><th>SSID</th><th>RSSI</th><th>Signal</th><th>Channel</th><th>Security</th><th>BSSID</th></tr></thead>
+<thead><tr><th>SSID</th><th>RSSI</th><th>Signal</th><th>Trend</th><th>Channel</th><th>Security</th><th>BSSID</th><th>Filter</th></tr></thead>
 <tbody>{wifi_rows}</tbody>
 </table>
 </div>
@@ -748,6 +815,7 @@ th,td{{color:black!important;border-bottom:1px solid black!important}}
 
 <div class="card">
 <h2>Nearby BLE Devices ({count} found)</h2>
+<div class="ignore-tools"><label><input class="show-ignored-box" type="checkbox"> Show ignored</label></div>
 <div class="legend">
 <span><i class="dot red"></i>~15 ft</span>
 <span><i class="dot yellow"></i>~10 ft</span>
@@ -757,7 +825,7 @@ th,td{{color:black!important;border-bottom:1px solid black!important}}
 </div>
 <div style="overflow-x:auto">
 <table>
-<thead><tr><th>Name</th><th>RSSI</th><th>Signal</th><th>Proximity</th><th>Seen</th><th>Address Type</th><th>Address</th><th>Advertisement Details</th></tr></thead>
+<thead><tr><th>Name</th><th>RSSI</th><th>Signal</th><th>Trend</th><th>Proximity</th><th>Seen</th><th>Address Type</th><th>Address</th><th>Advertisement Details</th><th>Filter</th></tr></thead>
 <tbody>{device_rows}</tbody>
 </table>
 </div>
@@ -770,6 +838,54 @@ th,td{{color:black!important;border-bottom:1px solid black!important}}
 </div>
 </div>
 <div class="footer">Ryancito Passive Wireless Survey Tool</div>
+<script>
+(function(){{
+  var storageKey = "ryancito-ignored-devices";
+  var ignored = {{}};
+  try {{
+    ignored = JSON.parse(localStorage.getItem(storageKey) || "{{}}");
+  }} catch (error) {{
+    ignored = {{}};
+  }}
+
+  function save(){{
+    try {{ localStorage.setItem(storageKey, JSON.stringify(ignored)); }}
+    catch (error) {{}}
+  }}
+
+  function updateRows(){{
+    document.querySelectorAll(".survey-row").forEach(function(row){{
+      var id = row.getAttribute("data-device-id");
+      var box = row.querySelector(".ignore-box");
+      var isIgnored = !!ignored[id];
+      box.checked = isIgnored;
+      row.classList.toggle("ignored-row", isIgnored);
+    }});
+  }}
+
+  document.querySelectorAll(".ignore-box").forEach(function(box){{
+    box.addEventListener("change", function(){{
+      var row = box.closest(".survey-row");
+      var id = row.getAttribute("data-device-id");
+      if (box.checked) ignored[id] = true;
+      else delete ignored[id];
+      save();
+      updateRows();
+    }});
+  }});
+
+  document.querySelectorAll(".show-ignored-box").forEach(function(box){{
+    box.addEventListener("change", function(){{
+      document.body.classList.toggle("show-ignored", box.checked);
+      document.querySelectorAll(".show-ignored-box").forEach(function(other){{
+        other.checked = box.checked;
+      }});
+    }});
+  }});
+
+  updateRows();
+}})();
+</script>
 </body>
 </html>""".format(
         error_html=error_html,
