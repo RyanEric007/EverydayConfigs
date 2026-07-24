@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>RyancitoSentinal</title>
+  <link rel="stylesheet" href="/style.css?v=2.5">
+</head>
+
+<body>
+  <header>
+    <h1>RyancitoSentinal — BLE Evidence Survey</h1>
+    <button id="settingsButton" class="icon-button" aria-label="Settings">⚙</button>
+  </header>
+
+  <main>
+    <section class="card status-card">
+      <div class="card-heading">
+        <h2>Status</h2>
+        <button class="collapse-button" data-target="statusContent" aria-label="Collapse Status">⌃</button>
+      </div>
+      <div id="statusContent" class="collapsible">
+        <div class="status-grid">
+          <div>
+            <label>Mode</label><strong id="connectionState">Starting</strong>
+            <label>Access Point</label><strong id="collectorSsid">—</strong>
+            <label>IP</label><strong id="collectorIp">—</strong>
+          </div>
+          <div>
+            <label>Devices</label><strong id="deviceCount">0</strong>
+            <label>Observations</label><strong id="observationCount">0</strong>
+            <label>Dropped Records</label><strong id="droppedCount">0</strong>
+          </div>
+          <div>
+            <label>Firmware</label><strong id="collectorVersion">—</strong>
+            <label>Free Heap</label><strong id="collectorHeap">—</strong>
+            <label>Buffer</label><strong id="collectorBuffer">—</strong>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card wifi-card">
+      <div class="card-heading">
+        <h2>Nearby Wi-Fi Networks (<span id="wifiCount">0</span> found)</h2>
+        <button class="collapse-button" data-target="wifiContent" aria-label="Collapse Wi-Fi">⌃</button>
+      </div>
+      <div id="wifiContent" class="collapsible">
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th data-wifi-sort="ssid">SSID</th>
+                <th data-wifi-sort="rssi">RSSI</th>
+                <th>Signal</th>
+                <th>Trend</th>
+                <th data-wifi-sort="channel">Channel</th>
+                <th data-wifi-sort="security">Security</th>
+                <th data-wifi-sort="bssid">BSSID</th>
+              </tr>
+            </thead>
+            <tbody id="wifiRows"></tbody>
+          </table>
+          <div id="wifiEmpty">Waiting for Wi-Fi survey…</div>
+        </div>
+        <p class="evidence-note">Wi-Fi surveys are cached and intentionally less frequent so BLE evidence collection
+          stays responsive.</p>
+      </div>
+    </section>
+
+    <section class="card devices-card">
+      <div class="card-heading">
+        <h2>Nearby BLE Devices (<span id="visibleCount">0</span> found)</h2>
+        <div><label class="show-ignored"><input id="showHiddenTop" type="checkbox"> Show ignored</label>
+          <button class="collapse-button" data-target="bleContent" aria-label="Collapse Bluetooth">⌃</button>
+        </div>
+      </div>
+      <div id="bleContent" class="collapsible">
+        <div class="legend">
+          <span><i class="dot red"></i>~15 ft</span>
+          <span><i class="dot yellow"></i>~10 ft</span>
+          <span><i class="dot green"></i>~5 ft</span>
+          <span><i class="dot blue"></i>right next to it</span>
+          <span><i class="dot off"></i>beyond ~15 ft</span>
+        </div>
+        <div class="toolbar">
+          <input id="search" type="search" placeholder="Search name, address, manufacturer…">
+          <button id="exportJson">Export evidence</button>
+          <button id="exportCsv">Export CSV</button>
+          <button id="printReportTop">Print / PDF</button>
+          <button id="pauseDisplay">Pause display</button>
+        </div>
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th data-ble-sort="name">Name</th>
+                <th data-ble-sort="latestRssi">RSSI</th>
+                <th>Signal</th>
+                <th>Trend</th>
+                <th data-ble-sort="latestRssi">Proximity</th>
+                <th data-ble-sort="sightings">Seen</th>
+                <th data-ble-sort="addrType">Address Type</th>
+                <th data-ble-sort="mac">Address</th>
+                <th data-ble-sort="manufacturer">Advertisement Details</th>
+                <th class="filter-cell">Filter</th>
+              </tr>
+            </thead>
+            <tbody id="deviceRows"></tbody>
+          </table>
+          <div id="emptyState">Waiting for BLE observations…</div>
+        </div>
+        <p class="evidence-note">Many modern devices rotate randomized BLE addresses. A sighting is an observation, not
+          proof of a person's identity or continued presence. Use only where scanning is permitted.</p>
+      </div>
+    </section>
+  </main>
+  <footer>RyancitoSentinal Passive Wireless Evidence Collector</footer>
+
+  <div id="backdrop" class="backdrop"></div>
+  <aside id="settings" class="drawer" aria-label="Settings">
+    <div class="drawer-title">
+      <h2>Settings</h2><button id="closeSettings" class="icon-button">×</button>
+    </div>
+    <h3>Display</h3>
+    <label>Theme
+      <select id="theme">
+        <option value="dark">Dark</option>
+        <option value="light">Light</option>
+      </select>
+    </label>
+    <label>Minimum RSSI
+      <select id="minRssi">
+        <option value="-100">Show all</option>
+        <option value="-90">-90 dBm</option>
+        <option value="-80">-80 dBm</option>
+        <option value="-70">-70 dBm</option>
+        <option value="-60">-60 dBm</option>
+      </select>
+    </label>
+    <label>Polling interval
+      <select id="pollMs">
+        <option value="250">250 ms</option>
+        <option value="500">500 ms</option>
+        <option value="1000">1 second</option>
+        <option value="2000">2 seconds</option>
+      </select>
+    </label>
+    <label class="check"><input id="showWifi" type="checkbox"> Show Wi-Fi section</label>
+    <label class="check"><input id="showBle" type="checkbox"> Show Bluetooth section</label>
+    <label class="check"><input id="compact" type="checkbox"> Compact layout</label>
+    <h3>Collection</h3>
+    <label>Wi-Fi survey
+      <select id="wifiMs">
+        <option value="30000">Every 30 seconds</option>
+        <option value="60000">Every minute</option>
+        <option value="120000">Every 2 minutes</option>
+        <option value="300000">Every 5 minutes</option>
+        <option value="0">Off</option>
+      </select>
+    </label>
+    <h3>Evidence</h3>
+    <label>Print layout
+      <select id="printOrientation">
+        <option value="landscape">Landscape</option>
+        <option value="portrait">Portrait</option>
+      </select>
+    </label>
+    <div id="exportStatus" class="export-status">Ready to export</div>
+    <button id="newSession">Start new session</button>
+    <button id="clearBrowserData" class="danger">Clear browser evidence</button>
+    <pre id="diagnostics">Loading diagnostics…</pre>
+  </aside>
+
+  <script src="/app.js?v=2.5"></script>
+</body>
+
+</html>
