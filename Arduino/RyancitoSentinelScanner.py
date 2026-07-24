@@ -15,10 +15,18 @@ import ubinascii
 
 # ========================== CONFIGURATION ==========================
 try:
-    from secret import HOME_SSID, HOME_PASSWORD, AP_SSID, AP_PASSWORD
+    import secret
+    HOME_SSID = getattr(secret, "HOME_SSID", "CHANGE_ME")
+    HOME_PASSWORD = getattr(secret, "HOME_PASSWORD", "CHANGE_ME")
+    IPHONE_SSID = getattr(secret, "IPHONE_SSID", "")
+    IPHONE_PASSWORD = getattr(secret, "IPHONE_PASSWORD", "")
+    AP_SSID = getattr(secret, "AP_SSID", "RyancitoSentinal")
+    AP_PASSWORD = getattr(secret, "AP_PASSWORD", "ryancito1337")
 except ImportError:
     HOME_SSID = "CHANGE_ME"
     HOME_PASSWORD = "CHANGE_ME"
+    IPHONE_SSID = ""
+    IPHONE_PASSWORD = ""
     AP_SSID = "RyancitoSentinal"
     AP_PASSWORD = "ryancito1337"
 
@@ -57,6 +65,7 @@ led_b = machine.PWM(machine.Pin(RGB_BLUE_PIN), freq=1000, duty=1023)
 sta = network.WLAN(network.STA_IF)
 ap = network.WLAN(network.AP_IF)
 in_ap_mode = False
+connected_ssid = ""
 ble = bluetooth.BLE()
 devices = {}
 scan_done = False
@@ -519,11 +528,12 @@ def start_survey_ap():
     print("AP started:", AP_SSID, ap.ifconfig()[0])
 
 
-def connect_to_home():
-    if not HOME_SSID or HOME_SSID == "CHANGE_ME":
+def connect_to_wifi(ssid, password, label):
+    global connected_ssid
+    if not ssid or ssid == "CHANGE_ME":
         return False
 
-    print("Connecting to home Wi-Fi:", HOME_SSID)
+    print("Connecting to {}: {}".format(label, ssid))
     set_rgb(0, 0, 80)
     sta.active(True)
     try:
@@ -532,9 +542,9 @@ def connect_to_home():
         pass
 
     try:
-        sta.connect(HOME_SSID, HOME_PASSWORD)
+        sta.connect(ssid, password)
     except Exception as e:
-        print_exception("Home Wi-Fi connection failed:", e)
+        print_exception("{} connection failed:".format(label), e)
         led_off()
         return False
 
@@ -549,16 +559,23 @@ def connect_to_home():
     orange_off()
     led_off()
     if sta.isconnected():
-        print("Connected to home Wi-Fi:", sta.ifconfig()[0])
+        connected_ssid = ssid
+        print("Connected to {}: {}".format(label, sta.ifconfig()[0]))
         orange_on()
         return True
 
-    print("Could not connect to home Wi-Fi.")
+    print("Could not connect to {}.".format(label))
+    try:
+        sta.disconnect()
+    except Exception:
+        pass
+    time.sleep_ms(250)
     return False
 
 
 def configure_wifi():
-    global in_ap_mode
+    global in_ap_mode, connected_ssid
+    connected_ssid = ""
     try:
         ap.active(False)
     except Exception:
@@ -569,11 +586,19 @@ def configure_wifi():
         pass
     time.sleep_ms(250)
 
-    if connect_to_home():
+    try:
+        network.hostname("RyancitoSentinal")
+    except Exception:
+        pass
+
+    if connect_to_wifi(IPHONE_SSID, IPHONE_PASSWORD, "iPhone hotspot"):
+        in_ap_mode = False
+    elif connect_to_wifi(HOME_SSID, HOME_PASSWORD, "home Wi-Fi"):
         in_ap_mode = False
     else:
         start_survey_ap()
         in_ap_mode = True
+        connected_ssid = AP_SSID
 
 
 def active_interface():
@@ -597,8 +622,8 @@ def get_device_status():
 
     return {
         "mode": ("Fallback AP + Wi-Fi/BLE survey" if in_ap_mode
-                 else "Home network + Wi-Fi/BLE survey"),
-        "ssid": AP_SSID if in_ap_mode else HOME_SSID,
+                 else "Connected Wi-Fi + Wi-Fi/BLE survey"),
+        "ssid": connected_ssid or "Unavailable",
         "mac": mac,
         "ip": ip,
         "scan_time": "{} seconds".format(SCAN_SECONDS),
@@ -754,6 +779,19 @@ th{{color:#b967ff;background:rgba(185,103,255,.1)}}
 .toggle{{width:42px;height:23px;accent-color:#b967ff}}
 .scan-status{{position:fixed;right:12px;bottom:12px;background:#0a0e16;border:1px solid rgba(0,255,247,.45);border-radius:9px;padding:8px 11px;font-size:.78em;z-index:10;display:none}}
 .auto-active .scan-status{{display:block}}
+.sweep-card{{display:none;text-align:center;min-height:65vh;align-items:center;justify-content:center;flex-direction:column}}
+.sweep-mode .dashboard-card{{display:none!important}}
+.sweep-mode .sweep-card{{display:flex}}
+.sweep-label{{color:#b967ff;font-size:.85em;letter-spacing:.15em}}
+.sweep-name{{font-size:1.6em;font-weight:bold;margin:12px 0;color:#e8ffff}}
+.sweep-rssi{{font-size:4.5em;line-height:1;font-weight:bold;text-shadow:0 0 18px currentColor}}
+.sweep-trend{{font-size:1.35em;font-weight:bold;margin:14px 0}}
+.sweep-proximity{{font-size:1.1em;color:#e8ffff}}
+.sweep-address{{opacity:.55;margin-top:10px;font-size:.8em}}
+.session-badge{{display:none;position:fixed;left:12px;bottom:12px;background:#260910;color:#ff7185;border:1px solid #ff334d;border-radius:9px;padding:8px 11px;font-size:.78em;z-index:10}}
+.recording .session-badge{{display:block}}
+.settings-actions{{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:18px}}
+.settings-action{{background:#111827;color:#00fff7;border:1px solid #31545a;border-radius:7px;padding:9px;font:inherit;cursor:pointer}}
 .btn-row{{text-align:center;margin-top:10px}}
 .btn{{display:inline-block;text-decoration:none;color:#00fff7;border:2px solid #00fff7;padding:10px 22px;border-radius:8px;margin:5px;background:transparent;font-family:inherit;font-size:1em;cursor:pointer}}
 .footer{{text-align:center;padding:14px;font-size:.8em;opacity:.45}}
@@ -789,7 +827,8 @@ th,td{{color:black!important;border-bottom:1px solid black!important;padding:3px
 .trend-new,.trend-up,.trend-down,.trend-steady{{color:black!important}}
 .ignore-cell,.ignore-tools{{display:none!important}}
 .ignored-row{{display:none!important}}
-.btn,.settings-open,.settings-drawer,.settings-overlay,.scan-status{{display:none!important}}
+.sweep-card{{display:none!important}}
+.btn,.settings-open,.settings-drawer,.settings-overlay,.scan-status,.session-badge{{display:none!important}}
 }}
 </style>
 </head>
@@ -799,7 +838,7 @@ th,td{{color:black!important;border-bottom:1px solid black!important;padding:3px
 </div>
 <div class="container">
 {error_html}
-<div class="card status-card">
+<div class="card status-card dashboard-card">
 <h2>Status</h2>
 <div class="status-grid">
   <div class="status-col">
@@ -816,11 +855,21 @@ th,td{{color:black!important;border-bottom:1px solid black!important;padding:3px
     <div><strong>Board</strong>{board}</div>
     <div><strong>Firmware</strong>{firmware}</div>
     <div><strong>Free Heap</strong>{heap}</div>
+    <div><strong>Report Time</strong><span id="client-time">Phone time unavailable</span></div>
   </div>
 </div>
 </div>
 
-<div class="card wifi-card">
+<div class="card sweep-card">
+  <div class="sweep-label">STRONGEST BLE SIGNAL</div>
+  <div class="sweep-name" id="sweep-name">No device</div>
+  <div class="sweep-rssi" id="sweep-rssi">--</div>
+  <div class="sweep-trend" id="sweep-trend">Waiting for observation</div>
+  <div class="sweep-proximity" id="sweep-proximity"></div>
+  <div class="sweep-address" id="sweep-address"></div>
+</div>
+
+<div class="card wifi-card dashboard-card">
 <h2>Nearby Wi-Fi Networks ({wifi_count} found)</h2>
 <div class="ignore-tools"><label><input class="show-ignored-box" type="checkbox"> Show ignored</label></div>
 <div style="overflow-x:auto">
@@ -832,7 +881,7 @@ th,td{{color:black!important;border-bottom:1px solid black!important;padding:3px
 <p class="note">Security is the authentication mode advertised by the access point. It does not prove that a network or its connected devices are trustworthy.</p>
 </div>
 
-<div class="card ble-card">
+<div class="card ble-card dashboard-card">
 <h2>Nearby BLE Devices ({count} found)</h2>
 <div class="ignore-tools"><label><input class="show-ignored-box" type="checkbox"> Show ignored</label></div>
 <div class="legend">
@@ -858,12 +907,20 @@ th,td{{color:black!important;border-bottom:1px solid black!important;padding:3px
 </div>
 <div class="footer">RyancitoSentinal Passive Wireless Survey Tool</div>
 <div class="scan-status" id="scan-status">Next scan in <strong id="countdown">--</strong>s</div>
+<div class="session-badge">● RECORDING SESSION</div>
 <div class="settings-overlay" id="settings-overlay"></div>
 <aside class="settings-drawer" id="settings-drawer" aria-label="Scanner settings">
   <div class="settings-title">
     <h2>Sentinal Settings</h2>
     <button class="settings-close" id="settings-close" type="button" aria-label="Close settings">×</button>
   </div>
+  <label class="setting">
+    <span>Interface<small>Detailed dashboard or mobile sweep</small></span>
+    <select id="setting-view">
+      <option value="dashboard">Dashboard</option>
+      <option value="sweep">Sweep mode</option>
+    </select>
+  </label>
   <label class="setting">
     <span>Auto-rescan<small>Refresh observations automatically</small></span>
     <input class="toggle" id="setting-auto" type="checkbox">
@@ -904,11 +961,22 @@ th,td{{color:black!important;border-bottom:1px solid black!important;padding:3px
     <span>Compact layout<small>Fit more observations onscreen</small></span>
     <input class="toggle" id="setting-compact" type="checkbox">
   </label>
+  <label class="setting">
+    <span>Record session<small>Save each scan with phone timestamps</small></span>
+    <input class="toggle" id="setting-recording" type="checkbox">
+  </label>
+  <div class="settings-actions">
+    <button class="settings-action" id="export-json" type="button">Export JSON</button>
+    <button class="settings-action" id="export-csv" type="button">Export CSV</button>
+    <button class="settings-action" id="clear-session" type="button">Clear session</button>
+    <button class="settings-action" id="rescan-now" type="button">Scan now</button>
+  </div>
 </aside>
 <script>
 (function(){{
   var storageKey = "ryancito-sentinal-ignored-devices";
   var settingsKey = "ryancito-sentinal-settings";
+  var sessionKey = "ryancito-sentinal-session";
   var ignored = {{}};
   var settings = {{
     auto: false,
@@ -917,9 +985,12 @@ th,td{{color:black!important;border-bottom:1px solid black!important;padding:3px
     wifi: true,
     ble: true,
     ignored: false,
-    compact: false
+    compact: false,
+    view: "dashboard",
+    recording: false
   }};
   var timer = null;
+  var recordedThisLoad = false;
   try {{
     ignored = JSON.parse(localStorage.getItem(storageKey) || "{{}}");
   }} catch (error) {{
@@ -968,11 +1039,41 @@ th,td{{color:black!important;border-bottom:1px solid black!important;padding:3px
     }}, 1000);
   }}
 
+  function updateSweep(){{
+    var candidates = Array.prototype.slice.call(
+      document.querySelectorAll(".ble-card .survey-row"));
+    candidates = candidates.filter(function(row){{
+      return !ignored[row.getAttribute("data-device-id")] &&
+             Number(row.getAttribute("data-rssi")) >= Number(settings.rssi);
+    }});
+    candidates.sort(function(a, b){{
+      return Number(b.getAttribute("data-rssi")) -
+             Number(a.getAttribute("data-rssi"));
+    }});
+    var row = candidates[0];
+    if (!row) {{
+      document.getElementById("sweep-name").textContent = "No BLE device";
+      document.getElementById("sweep-rssi").textContent = "--";
+      document.getElementById("sweep-trend").textContent = "No matching signal";
+      document.getElementById("sweep-proximity").textContent = "";
+      document.getElementById("sweep-address").textContent = "";
+      return;
+    }}
+    var cells = row.querySelectorAll("td");
+    document.getElementById("sweep-name").textContent = cells[0].textContent.trim();
+    document.getElementById("sweep-rssi").textContent = cells[1].textContent.trim() + " dBm";
+    document.getElementById("sweep-trend").textContent = cells[3].textContent.trim();
+    document.getElementById("sweep-proximity").textContent = cells[4].textContent.trim();
+    document.getElementById("sweep-address").textContent = cells[7].textContent.trim();
+  }}
+
   function applySettings(){{
     document.querySelector(".wifi-card").classList.toggle("section-hidden", !settings.wifi);
     document.querySelector(".ble-card").classList.toggle("section-hidden", !settings.ble);
     document.body.classList.toggle("show-ignored", !!settings.ignored);
     document.body.classList.toggle("compact", !!settings.compact);
+    document.body.classList.toggle("sweep-mode", settings.view === "sweep");
+    document.body.classList.toggle("recording", !!settings.recording);
     document.getElementById("setting-auto").checked = !!settings.auto;
     document.getElementById("setting-interval").value = String(settings.interval);
     document.getElementById("setting-rssi").value = String(settings.rssi);
@@ -980,18 +1081,24 @@ th,td{{color:black!important;border-bottom:1px solid black!important;padding:3px
     document.getElementById("setting-ble").checked = !!settings.ble;
     document.getElementById("setting-ignored").checked = !!settings.ignored;
     document.getElementById("setting-compact").checked = !!settings.compact;
+    document.getElementById("setting-view").value = settings.view;
+    document.getElementById("setting-recording").checked = !!settings.recording;
     document.querySelectorAll(".show-ignored-box").forEach(function(box){{
       box.checked = !!settings.ignored;
     }});
     updateRows();
+    updateSweep();
     startTimer();
   }}
 
-  function bindSetting(id, key, numeric){{
+  function bindSetting(id, key, mode){{
     document.getElementById(id).addEventListener("change", function(event){{
-      settings[key] = numeric ? Number(event.target.value) : event.target.checked;
+      if (mode === "number") settings[key] = Number(event.target.value);
+      else if (mode === "value") settings[key] = event.target.value;
+      else settings[key] = event.target.checked;
       saveSettings();
       applySettings();
+      captureSession();
     }});
   }}
 
@@ -1026,18 +1133,90 @@ th,td{{color:black!important;border-bottom:1px solid black!important;padding:3px
     if (event.key === "Escape") closeSettings();
   }});
 
-  bindSetting("setting-auto", "auto", false);
-  bindSetting("setting-interval", "interval", true);
-  bindSetting("setting-rssi", "rssi", true);
-  bindSetting("setting-wifi", "wifi", false);
-  bindSetting("setting-ble", "ble", false);
-  bindSetting("setting-ignored", "ignored", false);
-  bindSetting("setting-compact", "compact", false);
+  bindSetting("setting-auto", "auto", "check");
+  bindSetting("setting-interval", "interval", "number");
+  bindSetting("setting-rssi", "rssi", "number");
+  bindSetting("setting-wifi", "wifi", "check");
+  bindSetting("setting-ble", "ble", "check");
+  bindSetting("setting-ignored", "ignored", "check");
+  bindSetting("setting-compact", "compact", "check");
+  bindSetting("setting-view", "view", "value");
+  bindSetting("setting-recording", "recording", "check");
+
+  function loadSession(){{
+    try {{ return JSON.parse(localStorage.getItem(sessionKey) || "[]"); }}
+    catch (error) {{ return []; }}
+  }}
+
+  function captureSession(){{
+    if (!settings.recording || recordedThisLoad) return;
+    recordedThisLoad = true;
+    var snapshot = {{
+      timestamp: new Date().toISOString(),
+      observations: []
+    }};
+    document.querySelectorAll(".survey-row").forEach(function(row){{
+      var cells = row.querySelectorAll("td");
+      var radio = row.getAttribute("data-radio");
+      snapshot.observations.push({{
+        radio: radio,
+        id: row.getAttribute("data-device-id"),
+        name: cells[0].textContent.trim(),
+        rssi: Number(row.getAttribute("data-rssi")),
+        trend: cells[3].textContent.trim()
+      }});
+    }});
+    var session = loadSession();
+    session.push(snapshot);
+    if (session.length > 500) session = session.slice(session.length - 500);
+    try {{ localStorage.setItem(sessionKey, JSON.stringify(session)); }}
+    catch (error) {{}}
+  }}
+
+  function downloadFile(name, type, content){{
+    var blob = new Blob([content], {{type:type}});
+    var link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(function(){{ URL.revokeObjectURL(link.href); }}, 1000);
+  }}
+
+  document.getElementById("export-json").addEventListener("click", function(){{
+    downloadFile("RyancitoSentinal-session.json", "application/json",
+                 JSON.stringify(loadSession(), null, 2));
+  }});
+  document.getElementById("export-csv").addEventListener("click", function(){{
+    var lines = ["timestamp,radio,id,name,rssi,trend"];
+    loadSession().forEach(function(snapshot){{
+      snapshot.observations.forEach(function(item){{
+        var values = [snapshot.timestamp, item.radio, item.id, item.name,
+                      item.rssi, item.trend];
+        lines.push(values.map(function(value){{
+          return '"' + String(value).replace(/"/g, '""') + '"';
+        }}).join(","));
+      }});
+    }});
+    downloadFile("RyancitoSentinal-session.csv", "text/csv",
+                 lines.join("\\r\\n"));
+  }});
+  document.getElementById("clear-session").addEventListener("click", function(){{
+    if (confirm("Clear the recorded Sentinal session?"))
+      localStorage.removeItem(sessionKey);
+  }});
+  document.getElementById("rescan-now").addEventListener("click", function(){{
+    window.location.reload();
+  }});
   window.addEventListener("beforeprint", function(){{
     if (timer) clearInterval(timer);
   }});
   window.addEventListener("afterprint", startTimer);
+  document.getElementById("client-time").textContent =
+    new Date().toLocaleString();
   applySettings();
+  captureSession();
 }})();
 </script>
 </body>
@@ -1137,7 +1316,13 @@ def serve_forever():
             server.bind(addr)
             server.listen(3)
             ip = active_interface().ifconfig()[0]
-            print("Server ready -> http://{}:{}/".format(ip, HTTP_PORT))
+            print("")
+            print("========================================")
+            print(" RyancitoSentinal dashboard")
+            print(" http://{}:{}/".format(ip, HTTP_PORT))
+            print(" Try: http://ryancitosentinal.local/")
+            print("========================================")
+            print("")
 
             while True:
                 client = None
