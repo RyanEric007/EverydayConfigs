@@ -1,13 +1,11 @@
 <!doctype html>
 <html lang="en">
-
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>RyancitoSentinal</title>
-  <link rel="stylesheet" href="/style.css?v=2.5">
+  <link rel="stylesheet" href="/style.css?v=3.6">
 </head>
-
 <body>
   <header>
     <h1>RyancitoSentinal — BLE Evidence Survey</h1>
@@ -21,51 +19,46 @@
         <button class="collapse-button" data-target="statusContent" aria-label="Collapse Status">⌃</button>
       </div>
       <div id="statusContent" class="collapsible">
-        <div class="status-grid">
-          <div>
-            <label>Mode</label><strong id="connectionState">Starting</strong>
-            <label>Access Point</label><strong id="collectorSsid">—</strong>
-            <label>IP</label><strong id="collectorIp">—</strong>
-          </div>
-          <div>
-            <label>Devices</label><strong id="deviceCount">0</strong>
-            <label>Observations</label><strong id="observationCount">0</strong>
-            <label>Dropped Records</label><strong id="droppedCount">0</strong>
-          </div>
-          <div>
-            <label>Firmware</label><strong id="collectorVersion">—</strong>
-            <label>Free Heap</label><strong id="collectorHeap">—</strong>
-            <label>Buffer</label><strong id="collectorBuffer">—</strong>
-          </div>
+       <div class="status-grid">
+        <div>
+          <label>Client</label><strong id="contextClient">Detecting…</strong>
+          <label>Access Point</label><strong id="collectorSsid">—</strong>
+          <label>IP</label><strong id="collectorIp">—</strong>
         </div>
+        <div>
+          <label>Devices</label><strong id="deviceCount">0</strong>
+          <label>Observations</label><strong id="observationCount">0</strong>
+          <label>Dropped Records</label><strong id="droppedCount">0</strong>
+        </div>
+        <div>
+          <label>Firmware</label><strong id="collectorVersion">—</strong>
+          <label>Free Heap</label><strong id="collectorHeap">—</strong>
+          <label>Buffer</label><strong id="collectorBuffer">—</strong>
+        </div>
+       </div>
       </div>
     </section>
 
     <section class="card wifi-card">
       <div class="card-heading">
         <h2>Nearby Wi-Fi Networks (<span id="wifiCount">0</span> found)</h2>
-        <button class="collapse-button" data-target="wifiContent" aria-label="Collapse Wi-Fi">⌃</button>
+        <div class="heading-actions">
+          <button id="scanWifiNow" class="small-button">Scan Wi-Fi now</button>
+          <button class="collapse-button" data-target="wifiContent" aria-label="Collapse Wi-Fi">⌃</button>
+        </div>
       </div>
       <div id="wifiContent" class="collapsible">
         <div class="table-shell">
           <table>
-            <thead>
-              <tr>
-                <th data-wifi-sort="ssid">SSID</th>
-                <th data-wifi-sort="rssi">RSSI</th>
-                <th>Signal</th>
-                <th>Trend</th>
-                <th data-wifi-sort="channel">Channel</th>
-                <th data-wifi-sort="security">Security</th>
-                <th data-wifi-sort="bssid">BSSID</th>
-              </tr>
-            </thead>
+            <thead><tr>
+              <th data-wifi-sort="ssid">SSID</th><th data-wifi-sort="rssi">RSSI</th><th>Signal</th><th>Trend</th>
+              <th data-wifi-sort="channel">Channel</th><th data-wifi-sort="security">Security</th><th data-wifi-sort="bssid">BSSID</th>
+            </tr></thead>
             <tbody id="wifiRows"></tbody>
           </table>
           <div id="wifiEmpty">Waiting for Wi-Fi survey…</div>
         </div>
-        <p class="evidence-note">Wi-Fi surveys are cached and intentionally less frequent so BLE evidence collection
-          stays responsive.</p>
+        <p class="evidence-note">Wi-Fi surveys are cached and intentionally less frequent so BLE evidence collection stays responsive.</p>
       </div>
     </section>
 
@@ -73,46 +66,35 @@
       <div class="card-heading">
         <h2>Nearby BLE Devices (<span id="visibleCount">0</span> found)</h2>
         <div><label class="show-ignored"><input id="showHiddenTop" type="checkbox"> Show ignored</label>
-          <button class="collapse-button" data-target="bleContent" aria-label="Collapse Bluetooth">⌃</button>
-        </div>
+        <button class="collapse-button" data-target="bleContent" aria-label="Collapse Bluetooth">⌃</button></div>
       </div>
       <div id="bleContent" class="collapsible">
-        <div class="legend">
-          <span><i class="dot red"></i>~15 ft</span>
-          <span><i class="dot yellow"></i>~10 ft</span>
-          <span><i class="dot green"></i>~5 ft</span>
-          <span><i class="dot blue"></i>right next to it</span>
-          <span><i class="dot off"></i>beyond ~15 ft</span>
-        </div>
-        <div class="toolbar">
-          <input id="search" type="search" placeholder="Search name, address, manufacturer…">
-          <button id="exportJson">Export evidence</button>
-          <button id="exportCsv">Export CSV</button>
-          <button id="printReportTop">Print / PDF</button>
-          <button id="pauseDisplay">Pause display</button>
-        </div>
-        <div class="table-shell">
-          <table>
-            <thead>
-              <tr>
-                <th data-ble-sort="name">Name</th>
-                <th data-ble-sort="latestRssi">RSSI</th>
-                <th>Signal</th>
-                <th>Trend</th>
-                <th data-ble-sort="latestRssi">Proximity</th>
-                <th data-ble-sort="sightings">Seen</th>
-                <th data-ble-sort="addrType">Address Type</th>
-                <th data-ble-sort="mac">Address</th>
-                <th data-ble-sort="manufacturer">Advertisement Details</th>
-                <th class="filter-cell">Filter</th>
-              </tr>
-            </thead>
-            <tbody id="deviceRows"></tbody>
-          </table>
-          <div id="emptyState">Waiting for BLE observations…</div>
-        </div>
-        <p class="evidence-note">Many modern devices rotate randomized BLE addresses. A sighting is an observation, not
-          proof of a person's identity or continued presence. Use only where scanning is permitted.</p>
+      <div class="legend">
+        <span><i class="dot red"></i>~20–30 ft</span>
+        <span><i class="dot yellow"></i>~10–20 ft</span>
+        <span><i class="dot green"></i>~10 ft or closer</span>
+        <span><i class="dot blue"></i>right next to it</span>
+        <span><i class="dot off"></i>beyond ~30 ft / old</span>
+      </div>
+      <div class="toolbar">
+        <input id="search" type="search" placeholder="Search name, address, manufacturer…">
+        <button id="printReportTop">Print / PDF</button>
+        <button id="pauseDisplay">Pause display</button>
+      </div>
+      <div class="table-shell">
+        <table>
+          <thead>
+            <tr>
+              <th data-ble-sort="name">Name</th><th data-ble-sort="latestRssi">RSSI</th><th>Signal</th><th>Trend</th>
+              <th data-ble-sort="latestRssi">Proximity</th><th data-ble-sort="sightings">Seen</th><th data-ble-sort="addrType">Address Type</th>
+              <th data-ble-sort="mac">Address</th><th data-ble-sort="manufacturer">Advertisement Details</th><th class="filter-cell">Filter</th>
+            </tr>
+          </thead>
+          <tbody id="deviceRows"></tbody>
+        </table>
+        <div id="emptyState">Waiting for BLE observations…</div>
+      </div>
+      <p class="evidence-note">Many modern devices rotate randomized BLE addresses. A sighting is an observation, not proof of a person's identity or continued presence. Use only where scanning is permitted.</p>
       </div>
     </section>
   </main>
@@ -125,26 +107,19 @@
     </div>
     <h3>Display</h3>
     <label>Theme
-      <select id="theme">
-        <option value="dark">Dark</option>
-        <option value="light">Light</option>
-      </select>
+      <select id="theme"><option value="dark">Dark</option><option value="light">Light</option></select>
     </label>
     <label>Minimum RSSI
       <select id="minRssi">
-        <option value="-100">Show all</option>
-        <option value="-90">-90 dBm</option>
-        <option value="-80">-80 dBm</option>
-        <option value="-70">-70 dBm</option>
+        <option value="-100">Show all</option><option value="-90">-90 dBm</option>
+        <option value="-80">-80 dBm</option><option value="-70">-70 dBm</option>
         <option value="-60">-60 dBm</option>
       </select>
     </label>
     <label>Polling interval
       <select id="pollMs">
-        <option value="250">250 ms</option>
-        <option value="500">500 ms</option>
-        <option value="1000">1 second</option>
-        <option value="2000">2 seconds</option>
+        <option value="250">250 ms</option><option value="500">500 ms</option>
+        <option value="1000">1 second</option><option value="2000">2 seconds</option>
       </select>
     </label>
     <label class="check"><input id="showWifi" type="checkbox"> Show Wi-Fi section</label>
@@ -161,19 +136,79 @@
       </select>
     </label>
     <h3>Evidence</h3>
+    <label>Case ID <input id="caseId" maxlength="80" placeholder="Optional"></label>
+    <label>Investigator <input id="investigator" maxlength="80" placeholder="Optional"></label>
+    <label>Location label <input id="locationLabel" maxlength="120" placeholder="Room, vehicle, area…"></label>
+    <label>Evidence note <textarea id="caseNote" maxlength="1000" rows="4" placeholder="Conditions, purpose, observations…"></textarea></label>
     <label>Print layout
       <select id="printOrientation">
         <option value="landscape">Landscape</option>
         <option value="portrait">Portrait</option>
       </select>
     </label>
+    <div class="evidence-actions">
+      <button id="exportJson">Export evidence (JSON)</button>
+      <button id="exportCsv">Export CSV</button>
+    </div>
     <div id="exportStatus" class="export-status">Ready to export</div>
     <button id="newSession">Start new session</button>
     <button id="clearBrowserData" class="danger">Clear browser evidence</button>
+    <h3>Help</h3>
+    <div class="help-guide">
+      <details open>
+        <summary>Getting started</summary>
+        <p>Keep this page open while surveying. BLE records continuously. Wi-Fi scans on its selected schedule or when you tap <strong>Scan Wi-Fi now</strong>.</p>
+      </details>
+      <details>
+        <summary>RSSI, proximity, and movement</summary>
+        <p>RSSI is received signal strength in dBm; values closer to zero are stronger. Wi-Fi trends compare consecutive completed surveys: at least +4 dB is stronger, −4 dB is weaker, and smaller changes are stable. Distance labels and BLE movement arrows are estimates affected by walls, bodies, antennas, and reflections—not exact locations or directions.</p>
+      </details>
+      <details>
+        <summary>Pause and ignored devices</summary>
+        <p><strong>Pause display</strong> freezes the visible table while evidence continues recording. Ignore hides a device from the normal view; enable Show ignored to reveal it again.</p>
+      </details>
+      <details>
+        <summary>Sessions and browser storage</summary>
+        <p><strong>Start new session</strong> begins a separate evidence collection without deleting earlier browser records. <strong>Clear browser evidence</strong> permanently removes all saved sessions from this browser.</p>
+      </details>
+      <details>
+        <summary>Exports and reports</summary>
+        <p>JSON is the complete machine-readable evidence package. CSV is best for spreadsheets. Print / PDF creates a readable report. Saved detail-card images document one selected observation.</p>
+      </details>
+      <details>
+        <summary>Wi-Fi and BLE limitations</summary>
+        <p>Wi-Fi security is the access point's advertised mode, not proof that it is trustworthy. Randomized BLE addresses may rotate. A sighting does not prove a person's identity or continued presence.</p>
+      </details>
+      <details>
+        <summary>Evidence handling</summary>
+        <p>Enter a case ID, investigator, location label, and notes before exporting. Keep the original JSON and its SHA-256 hash. Use this passive survey only where scanning is permitted.</p>
+      </details>
+    </div>
     <pre id="diagnostics">Loading diagnostics…</pre>
   </aside>
 
-  <script src="/app.js?v=2.5"></script>
-</body>
+  <div id="detailBackdrop" class="detail-backdrop"></div>
+  <section id="detailModal" class="detail-modal" role="dialog" aria-modal="true" aria-labelledby="detailTitle">
+    <div class="detail-title">
+      <div><span id="detailType">OBSERVATION</span><h2 id="detailTitle">Details</h2></div>
+      <button id="closeDetail" class="detail-close" aria-label="Close details">×</button>
+    </div>
+    <div id="detailSummary" class="detail-summary"></div>
+    <h3>Observed data</h3>
+    <dl id="detailFields" class="detail-fields"></dl>
+    <h3>Raw advertisement data</h3>
+    <pre id="detailRaw" class="raw-data">Unavailable</pre>
+    <div id="decodedFields" class="decoded-fields"></div>
+    <h3>Recent evidence</h3>
+    <div id="detailChart" class="detail-chart"></div>
+    <div id="detailHistory" class="detail-history">Loading…</div>
+    <div class="detail-actions">
+      <button id="copyRaw">Copy raw data</button>
+      <button id="saveCardImage">Save card image</button>
+      <button id="closeDetailBottom">Close</button>
+    </div>
+  </section>
 
+  <script src="/app.js?v=3.6"></script>
+</body>
 </html>

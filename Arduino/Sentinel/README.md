@@ -13,9 +13,11 @@ All files must be placed in the root of the MicroPython filesystem.
 
 ## Connection behavior
 
-The collector tries `HOME_SSID` from `secret.py`. If that fails, it starts
-`AP_SSID`. The dashboard URL is printed in the REPL. Fallback AP mode normally
-uses `http://192.168.4.1/`.
+The collector tries `DEFAULT_SSID` from `secret.py`. If that fails, it starts
+`AP_SSID`. `DEFAULT_PASSWORD` is the matching password. Older `HOME_SSID` and
+`HOME_PASSWORD` names are accepted temporarily for migration. The dashboard
+URL is printed in the REPL. Fallback AP mode normally uses
+`http://192.168.4.1/`.
 
 ## Collector behavior
 
@@ -28,6 +30,11 @@ uses `http://192.168.4.1/`.
   of at least 5 dB, or a 1-second heartbeat.
 - No evidence is written to ESP32 flash.
 - Wi-Fi surveys are cached and rate-limited to protect BLE collection time.
+- **Scan Wi-Fi now** forces an immediate survey and then resumes the normal
+  schedule.
+- Wi-Fi trends compare the same BSSID across consecutive completed surveys.
+  Changes of at least 4 dB are labeled stronger or weaker; smaller changes are
+  labeled stable. Sorting and screen refreshes do not alter the comparison.
 - BLE scanning pauses briefly during the ESP32's blocking WLAN scan, then
   resumes automatically.
 - `/api/updates?after=N&limit=50` returns compact sequence batches.
@@ -63,9 +70,18 @@ Flag bits:
 - Click sortable table headings to change field and direction.
 - Pausing freezes the display only; background polling and evidence recording
   continue.
+- Settings includes a collapsible plain-language help guide covering controls,
+  sessions, exports, RSSI limitations, privacy, and evidence handling.
 - JSON export separates observed data, derived device summaries, and
   annotations.
 - JSON and CSV exports include SHA-256 evidence hashes.
+
+## Client identification
+
+The Status card identifies the browser client as iPhone, iPad, Android, Mac,
+Windows PC, Linux computer, or a generic browser client. This is a lightweight
+display hint based on browser information; it is not stored as sensor evidence
+and it does not fingerprint or uniquely identify the device.
 
 Double-click a device row to hide it. Use Settings to reveal hidden devices.
 

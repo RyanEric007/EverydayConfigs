@@ -22,13 +22,17 @@ except ImportError:
 
 try:
     import secret
-    HOME_SSID = getattr(secret, "HOME_SSID", "")
-    HOME_PASSWORD = getattr(secret, "HOME_PASSWORD", "")
+    # DEFAULT_* replaces HOME_*. The fallback keeps older secret.py files
+    # working while users migrate.
+    DEFAULT_SSID = getattr(
+        secret, "DEFAULT_SSID", getattr(secret, "HOME_SSID", ""))
+    DEFAULT_PASSWORD = getattr(
+        secret, "DEFAULT_PASSWORD", getattr(secret, "HOME_PASSWORD", ""))
     AP_SSID = getattr(secret, "AP_SSID", "RyancitoSentinal")
     AP_PASSWORD = getattr(secret, "AP_PASSWORD", "ryancito1337")
 except ImportError:
-    HOME_SSID = ""
-    HOME_PASSWORD = ""
+    DEFAULT_SSID = ""
+    DEFAULT_PASSWORD = ""
     AP_SSID = "RyancitoSentinal"
     AP_PASSWORD = "ryancito1337"
 
@@ -46,6 +50,11 @@ MIN_RSSI = -100
 RSSI_DELTA_DB = 5
 HEARTBEAT_MS = 1_000
 WIFI_SCAN_MIN_INTERVAL_MS = 30_000
+PROXIMITY_STALE_MS = 5_000
+RSSI_RIGHT_NEXT_TO = -50
+RSSI_WITHIN_10_FT = -70
+RSSI_10_TO_20_FT = -78
+RSSI_20_TO_30_FT = -85
 
 SCAN_INTERVAL_US = 30_000
 SCAN_WINDOW_US = 30_000
@@ -53,7 +62,7 @@ ACTIVE_SCAN = True
 
 LOG_LEVEL = 1  # 0=quiet, 1=status, 2=debug
 FIRMWARE_NAME = "RyancitoSentinal Collector"
-FIRMWARE_VERSION = "2.1.0"
+FIRMWARE_VERSION = "2.4.0"
 
 ORANGE_PIN = 48
 RGB_RED_PIN = 46
@@ -253,6 +262,28 @@ def process_raw(max_items=32):
     return processed
 
 
+def update_proximity_led():
+    now = time.ticks_ms()
+    strongest_rssi = None
+    for state in device_state.values():
+        rssi = state[1]
+        last_seen_ms = state[3]
+        if time.ticks_diff(now, last_seen_ms) <= PROXIMITY_STALE_MS:
+            if strongest_rssi is None or rssi > strongest_rssi:
+                strongest_rssi = rssi
+
+    if strongest_rssi is None or strongest_rssi < RSSI_20_TO_30_FT:
+        set_rgb(28, 28, 28)       # gray: stale or beyond ~30 ft
+    elif strongest_rssi < RSSI_10_TO_20_FT:
+        set_rgb(255, 0, 0)        # red: approximately 20–30 ft
+    elif strongest_rssi < RSSI_WITHIN_10_FT:
+        set_rgb(255, 150, 0)      # yellow: approximately 10–20 ft
+    elif strongest_rssi < RSSI_RIGHT_NEXT_TO:
+        set_rgb(0, 255, 0)        # green: approximately 10 ft or closer
+    else:
+        set_rgb(0, 0, 255)        # blue: immediately nearby
+
+
 def oldest_sequence():
     return max(1, next_sequence - EVIDENCE_RING_SIZE)
 
@@ -349,14 +380,14 @@ def scan_wifi_if_due(force=False):
         wifi_scan_duration_ms = time.ticks_diff(time.ticks_ms(), started)
 
 
-def connect_home():
+def connect_default():
     global active_interface, connected_ssid
-    if not HOME_SSID:
+    if not DEFAULT_SSID:
         return False
-    log(1, "Connecting to home Wi-Fi:", HOME_SSID)
+    log(1, "Connecting to default Wi-Fi:", DEFAULT_SSID)
     sta.active(True)
     try:
-        sta.connect(HOME_SSID, HOME_PASSWORD)
+        sta.connect(DEFAULT_SSID, DEFAULT_PASSWORD)
     except Exception as e:
         print_exception("Wi-Fi connect failed:", e)
         return False
@@ -376,7 +407,7 @@ def connect_home():
         return False
 
     active_interface = sta
-    connected_ssid = HOME_SSID
+    connected_ssid = DEFAULT_SSID
     return True
 
 
@@ -410,7 +441,7 @@ def configure_network():
     ap.active(False)
     sta.active(False)
     time.sleep_ms(200)
-    if not connect_home():
+    if not connect_default():
         start_fallback_ap()
     log(1, "Network:", connected_ssid, active_interface.ifconfig()[0])
 
@@ -491,6 +522,11 @@ def diagnostics():
             "min_rssi": MIN_RSSI,
             "rssi_delta_db": RSSI_DELTA_DB,
             "heartbeat_ms": HEARTBEAT_MS,
+            "proximity_stale_ms": PROXIMITY_STALE_MS,
+            "rssi_right_next_to": RSSI_RIGHT_NEXT_TO,
+            "rssi_within_10_ft": RSSI_WITHIN_10_FT,
+            "rssi_10_to_20_ft": RSSI_10_TO_20_FT,
+            "rssi_20_to_30_ft": RSSI_20_TO_30_FT,
             "active_scan": ACTIVE_SCAN,
             "scan_interval_us": SCAN_INTERVAL_US,
             "scan_window_us": SCAN_WINDOW_US,
@@ -539,7 +575,8 @@ def handle_http(client):
             return
 
         if path == "/api/wifi":
-            scan_wifi_if_due()
+            force = query_value(target, "force", "0") == "1"
+            scan_wifi_if_due(force=force)
             send_bytes(
                 client, "200 OK", "application/json",
                 ujson.dumps({
@@ -591,6 +628,7 @@ def serve_forever():
     set_rgb(0, 20, 45)
 
     last_gc_ms = time.ticks_ms()
+    last_led_ms = time.ticks_ms()
     while True:
         process_raw(48)
         try:
@@ -607,6 +645,9 @@ def serve_forever():
                     pass
 
         now = time.ticks_ms()
+        if time.ticks_diff(now, last_led_ms) >= 100:
+            update_proximity_led()
+            last_led_ms = now
         if time.ticks_diff(now, last_gc_ms) >= 5_000:
             gc.collect()
             last_gc_ms = now
