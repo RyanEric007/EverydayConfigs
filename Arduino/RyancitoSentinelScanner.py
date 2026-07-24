@@ -1,4 +1,4 @@
-# main.py - Ryancito BLE Site Survey Tool
+# main.py - RyancitoSentinal Wireless Survey Tool
 # Arduino Nano ESP32 (ESP32-S3), MicroPython with bluetooth support
 #
 # Passive scanner only: this program listens for BLE advertisements.
@@ -19,7 +19,7 @@ try:
 except ImportError:
     HOME_SSID = "CHANGE_ME"
     HOME_PASSWORD = "CHANGE_ME"
-    AP_SSID = "Ryancito-BLE"
+    AP_SSID = "RyancitoSentinal"
     AP_PASSWORD = "ryancito1337"
 
 HTTP_PORT = 80
@@ -625,7 +625,8 @@ def build_device_rows(found):
         proximity, color = proximity_from_rssi(item["best_rssi"])
 
         rows.append(
-            "<tr class='survey-row' data-device-id='ble:{}'>"
+            "<tr class='survey-row' data-radio='ble' data-rssi='{}' "
+            "data-device-id='ble:{}'>"
             "<td>{}</td><td>{}</td><td class='bar'>{}</td>"
             "<td class='{}'>{}</td>"
             "<td><span class='dot {}'></span>{}</td>"
@@ -633,6 +634,7 @@ def build_device_rows(found):
             "<td class='ignore-cell'><label><input class='ignore-box' "
             "type='checkbox'> Ignore</label></td>"
             "</tr>".format(
+                item["best_rssi"],
                 html_escape(item["mac"]),
                 html_escape(name),
                 item["best_rssi"],
@@ -658,12 +660,14 @@ def build_wifi_rows(networks):
     for item in networks:
         hidden = " <span class='muted'>(hidden)</span>" if item["hidden"] else ""
         rows.append(
-            "<tr class='survey-row' data-device-id='wifi:{}'>"
+            "<tr class='survey-row' data-radio='wifi' data-rssi='{}' "
+            "data-device-id='wifi:{}'>"
             "<td>{}{}</td><td>{}</td><td class='bar'>{}</td>"
             "<td class='{}'>{}</td>"
             "<td>{}</td><td>{}</td><td>{}</td>"
             "<td class='ignore-cell'><label><input class='ignore-box' "
             "type='checkbox'> Ignore</label></td></tr>".format(
+                item["rssi"],
                 html_escape(item["bssid"]),
                 html_escape(item["ssid"]),
                 hidden,
@@ -699,10 +703,11 @@ def build_html(found, wifi_networks, scan_error=None, wifi_error=None):
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Ryancito Sentinel</title>
+<title>RyancitoSentinal</title>
 <style>
 body{{background:#05070c;color:#00fff7;font-family:monospace;margin:0}}
 .header{{text-align:center;padding:16px;border-bottom:1px solid rgba(0,255,247,.2);font-size:1.35em;font-weight:bold;text-shadow:0 0 10px #00fff7}}
+.settings-open{{position:absolute;right:12px;top:10px;color:#00fff7;background:#0a0e16;border:1px solid #00fff7;border-radius:9px;padding:7px 11px;font:inherit;cursor:pointer}}
 .container{{max-width:1100px;margin:0 auto;padding:16px 12px 40px}}
 .card{{background:#0a0e16;border:1px solid rgba(0,255,247,.3);border-radius:12px;padding:16px;margin-bottom:16px}}
 h2{{color:#b967ff;font-size:1.1em;margin:0 0 14px}}
@@ -732,6 +737,23 @@ th{{color:#b967ff;background:rgba(185,103,255,.1)}}
 .ignored-row{{display:none}}
 .show-ignored .ignored-row{{display:table-row;opacity:.35}}
 .show-ignored .ignored-row td{{text-decoration:line-through}}
+.section-hidden{{display:none!important}}
+.compact .card{{padding:9px;margin-bottom:9px}}
+.compact th,.compact td{{padding:4px 3px}}
+.settings-overlay{{position:fixed;inset:0;background:rgba(0,0,0,.62);opacity:0;pointer-events:none;transition:opacity .2s;z-index:20}}
+.settings-drawer{{position:fixed;right:0;top:0;height:100%;width:min(360px,88vw);box-sizing:border-box;background:#090d15;border-left:1px solid rgba(0,255,247,.4);padding:18px;transform:translateX(105%);transition:transform .25s;z-index:21;overflow-y:auto;box-shadow:-10px 0 30px rgba(0,0,0,.5)}}
+.settings-visible .settings-overlay{{opacity:1;pointer-events:auto}}
+.settings-visible .settings-drawer{{transform:translateX(0)}}
+.settings-title{{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}}
+.settings-title h2{{margin:0;font-size:1.2em}}
+.settings-close{{color:#00fff7;background:transparent;border:0;font-size:1.7em;cursor:pointer}}
+.setting{{display:flex;justify-content:space-between;align-items:center;gap:15px;padding:12px 0;border-bottom:1px solid rgba(0,255,247,.12)}}
+.setting span{{color:#e8ffff}}
+.setting small{{display:block;color:#7da5aa;margin-top:3px}}
+.setting select{{background:#111827;color:#00fff7;border:1px solid #31545a;border-radius:6px;padding:7px}}
+.toggle{{width:42px;height:23px;accent-color:#b967ff}}
+.scan-status{{position:fixed;right:12px;bottom:12px;background:#0a0e16;border:1px solid rgba(0,255,247,.45);border-radius:9px;padding:8px 11px;font-size:.78em;z-index:10;display:none}}
+.auto-active .scan-status{{display:block}}
 .btn-row{{text-align:center;margin-top:10px}}
 .btn{{display:inline-block;text-decoration:none;color:#00fff7;border:2px solid #00fff7;padding:10px 22px;border-radius:8px;margin:5px;background:transparent;font-family:inherit;font-size:1em;cursor:pointer}}
 .footer{{text-align:center;padding:14px;font-size:.8em;opacity:.45}}
@@ -739,9 +761,6 @@ th{{color:#b967ff;background:rgba(185,103,255,.1)}}
 @page{{size:landscape;margin:.35in}}
 @media print{{
 *{{text-shadow:none!important;box-shadow:none!important}}
-body{{background:white!important;color:black!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}}
-.header{{color:black!important;text-shadow:none!important;border-color:black!important}}
-.card{{background:white!important;border:1px solid black!important;color:black!important}}
 html,body{{width:100%!important;margin:0!important;padding:0!important}}
 body{{background:white!important;color:black!important;font-size:8pt!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}}
 .header{{color:black!important;text-shadow:none!important;border-color:black!important;padding:6px!important;font-size:13pt!important}}
@@ -752,8 +771,6 @@ h2{{font-size:10pt!important;margin-bottom:6px!important}}
 .status-grid{{gap:8px!important}}
 .status-col div{{margin-bottom:3px!important;font-size:8pt!important}}
 th{{background:#eee!important;color:black!important}}
-table{{border:1px solid black!important}}
-th,td{{color:black!important;border-bottom:1px solid black!important}}
 table{{border:1px solid black!important;width:100%!important;table-layout:auto!important;font-size:7pt!important}}
 thead{{display:table-header-group}}
 tr{{break-inside:avoid!important;page-break-inside:avoid!important}}
@@ -772,15 +789,17 @@ th,td{{color:black!important;border-bottom:1px solid black!important;padding:3px
 .trend-new,.trend-up,.trend-down,.trend-steady{{color:black!important}}
 .ignore-cell,.ignore-tools{{display:none!important}}
 .ignored-row{{display:none!important}}
-.btn{{display:none!important}}
+.btn,.settings-open,.settings-drawer,.settings-overlay,.scan-status{{display:none!important}}
 }}
 </style>
 </head>
 <body>
-<div class="header">Ryancito Sentinel — Wi-Fi + BLE Survey</div>
+<div class="header">RyancitoSentinal — Wi-Fi + BLE Survey
+<button class="settings-open" id="settings-open" type="button" aria-label="Open settings">⚙ Settings</button>
+</div>
 <div class="container">
 {error_html}
-<div class="card">
+<div class="card status-card">
 <h2>Status</h2>
 <div class="status-grid">
   <div class="status-col">
@@ -801,7 +820,7 @@ th,td{{color:black!important;border-bottom:1px solid black!important;padding:3px
 </div>
 </div>
 
-<div class="card">
+<div class="card wifi-card">
 <h2>Nearby Wi-Fi Networks ({wifi_count} found)</h2>
 <div class="ignore-tools"><label><input class="show-ignored-box" type="checkbox"> Show ignored</label></div>
 <div style="overflow-x:auto">
@@ -813,7 +832,7 @@ th,td{{color:black!important;border-bottom:1px solid black!important;padding:3px
 <p class="note">Security is the authentication mode advertised by the access point. It does not prove that a network or its connected devices are trustworthy.</p>
 </div>
 
-<div class="card">
+<div class="card ble-card">
 <h2>Nearby BLE Devices ({count} found)</h2>
 <div class="ignore-tools"><label><input class="show-ignored-box" type="checkbox"> Show ignored</label></div>
 <div class="legend">
@@ -837,19 +856,90 @@ th,td{{color:black!important;border-bottom:1px solid black!important;padding:3px
 <button class="btn" onclick="window.print()">Print</button>
 </div>
 </div>
-<div class="footer">Ryancito Passive Wireless Survey Tool</div>
+<div class="footer">RyancitoSentinal Passive Wireless Survey Tool</div>
+<div class="scan-status" id="scan-status">Next scan in <strong id="countdown">--</strong>s</div>
+<div class="settings-overlay" id="settings-overlay"></div>
+<aside class="settings-drawer" id="settings-drawer" aria-label="Scanner settings">
+  <div class="settings-title">
+    <h2>Sentinal Settings</h2>
+    <button class="settings-close" id="settings-close" type="button" aria-label="Close settings">×</button>
+  </div>
+  <label class="setting">
+    <span>Auto-rescan<small>Refresh observations automatically</small></span>
+    <input class="toggle" id="setting-auto" type="checkbox">
+  </label>
+  <label class="setting">
+    <span>Scan interval<small>Time between dashboard refreshes</small></span>
+    <select id="setting-interval">
+      <option value="15">15 seconds</option>
+      <option value="30">30 seconds</option>
+      <option value="60">1 minute</option>
+      <option value="120">2 minutes</option>
+      <option value="300">5 minutes</option>
+    </select>
+  </label>
+  <label class="setting">
+    <span>Minimum signal<small>Hide weaker observations</small></span>
+    <select id="setting-rssi">
+      <option value="-100">Show all</option>
+      <option value="-90">-90 dBm or stronger</option>
+      <option value="-80">-80 dBm or stronger</option>
+      <option value="-70">-70 dBm or stronger</option>
+      <option value="-60">-60 dBm or stronger</option>
+    </select>
+  </label>
+  <label class="setting">
+    <span>Show Wi-Fi<small>Display nearby access points</small></span>
+    <input class="toggle" id="setting-wifi" type="checkbox">
+  </label>
+  <label class="setting">
+    <span>Show Bluetooth<small>Display BLE advertisements</small></span>
+    <input class="toggle" id="setting-ble" type="checkbox">
+  </label>
+  <label class="setting">
+    <span>Show ignored<small>Reveal filtered observations</small></span>
+    <input class="toggle" id="setting-ignored" type="checkbox">
+  </label>
+  <label class="setting">
+    <span>Compact layout<small>Fit more observations onscreen</small></span>
+    <input class="toggle" id="setting-compact" type="checkbox">
+  </label>
+</aside>
 <script>
 (function(){{
-  var storageKey = "ryancito-ignored-devices";
+  var storageKey = "ryancito-sentinal-ignored-devices";
+  var settingsKey = "ryancito-sentinal-settings";
   var ignored = {{}};
+  var settings = {{
+    auto: false,
+    interval: 30,
+    rssi: -100,
+    wifi: true,
+    ble: true,
+    ignored: false,
+    compact: false
+  }};
+  var timer = null;
   try {{
     ignored = JSON.parse(localStorage.getItem(storageKey) || "{{}}");
   }} catch (error) {{
     ignored = {{}};
   }}
+  try {{
+    var storedSettings = JSON.parse(localStorage.getItem(settingsKey) || "{{}}");
+    Object.keys(storedSettings).forEach(function(key){{
+      if (Object.prototype.hasOwnProperty.call(settings, key))
+        settings[key] = storedSettings[key];
+    }});
+  }} catch (error) {{}}
 
   function save(){{
     try {{ localStorage.setItem(storageKey, JSON.stringify(ignored)); }}
+    catch (error) {{}}
+  }}
+
+  function saveSettings(){{
+    try {{ localStorage.setItem(settingsKey, JSON.stringify(settings)); }}
     catch (error) {{}}
   }}
 
@@ -858,8 +948,50 @@ th,td{{color:black!important;border-bottom:1px solid black!important;padding:3px
       var id = row.getAttribute("data-device-id");
       var box = row.querySelector(".ignore-box");
       var isIgnored = !!ignored[id];
+      var tooWeak = Number(row.getAttribute("data-rssi")) < Number(settings.rssi);
       box.checked = isIgnored;
       row.classList.toggle("ignored-row", isIgnored);
+      row.classList.toggle("section-hidden", tooWeak);
+    }});
+  }}
+
+  function startTimer(){{
+    if (timer) clearInterval(timer);
+    document.body.classList.toggle("auto-active", !!settings.auto);
+    if (!settings.auto) return;
+    var remaining = Number(settings.interval);
+    document.getElementById("countdown").textContent = remaining;
+    timer = setInterval(function(){{
+      remaining -= 1;
+      document.getElementById("countdown").textContent = remaining;
+      if (remaining <= 0) window.location.reload();
+    }}, 1000);
+  }}
+
+  function applySettings(){{
+    document.querySelector(".wifi-card").classList.toggle("section-hidden", !settings.wifi);
+    document.querySelector(".ble-card").classList.toggle("section-hidden", !settings.ble);
+    document.body.classList.toggle("show-ignored", !!settings.ignored);
+    document.body.classList.toggle("compact", !!settings.compact);
+    document.getElementById("setting-auto").checked = !!settings.auto;
+    document.getElementById("setting-interval").value = String(settings.interval);
+    document.getElementById("setting-rssi").value = String(settings.rssi);
+    document.getElementById("setting-wifi").checked = !!settings.wifi;
+    document.getElementById("setting-ble").checked = !!settings.ble;
+    document.getElementById("setting-ignored").checked = !!settings.ignored;
+    document.getElementById("setting-compact").checked = !!settings.compact;
+    document.querySelectorAll(".show-ignored-box").forEach(function(box){{
+      box.checked = !!settings.ignored;
+    }});
+    updateRows();
+    startTimer();
+  }}
+
+  function bindSetting(id, key, numeric){{
+    document.getElementById(id).addEventListener("change", function(event){{
+      settings[key] = numeric ? Number(event.target.value) : event.target.checked;
+      saveSettings();
+      applySettings();
     }});
   }}
 
@@ -876,14 +1008,36 @@ th,td{{color:black!important;border-bottom:1px solid black!important;padding:3px
 
   document.querySelectorAll(".show-ignored-box").forEach(function(box){{
     box.addEventListener("change", function(){{
-      document.body.classList.toggle("show-ignored", box.checked);
-      document.querySelectorAll(".show-ignored-box").forEach(function(other){{
-        other.checked = box.checked;
-      }});
+      settings.ignored = box.checked;
+      saveSettings();
+      applySettings();
     }});
   }});
 
-  updateRows();
+  document.getElementById("settings-open").addEventListener("click", function(){{
+    document.body.classList.add("settings-visible");
+  }});
+  function closeSettings(){{
+    document.body.classList.remove("settings-visible");
+  }}
+  document.getElementById("settings-close").addEventListener("click", closeSettings);
+  document.getElementById("settings-overlay").addEventListener("click", closeSettings);
+  document.addEventListener("keydown", function(event){{
+    if (event.key === "Escape") closeSettings();
+  }});
+
+  bindSetting("setting-auto", "auto", false);
+  bindSetting("setting-interval", "interval", true);
+  bindSetting("setting-rssi", "rssi", true);
+  bindSetting("setting-wifi", "wifi", false);
+  bindSetting("setting-ble", "ble", false);
+  bindSetting("setting-ignored", "ignored", false);
+  bindSetting("setting-compact", "compact", false);
+  window.addEventListener("beforeprint", function(){{
+    if (timer) clearInterval(timer);
+  }});
+  window.addEventListener("afterprint", startTimer);
+  applySettings();
 }})();
 </script>
 </body>
