@@ -20,15 +20,11 @@ try:
     import secret
     HOME_SSID = getattr(secret, "HOME_SSID", "")
     HOME_PASSWORD = getattr(secret, "HOME_PASSWORD", "")
-    IPHONE_SSID = getattr(secret, "IPHONE_SSID", "")
-    IPHONE_PASSWORD = getattr(secret, "IPHONE_PASSWORD", "")
     AP_SSID = getattr(secret, "AP_SSID", "RyancitoSentinal")
     AP_PASSWORD = getattr(secret, "AP_PASSWORD", "ryancito1337")
 except ImportError:
     HOME_SSID = "CHANGE_ME"
     HOME_PASSWORD = "CHANGE_ME"
-    IPHONE_SSID = ""
-    IPHONE_PASSWORD = ""
     AP_SSID = "RyancitoSentinal"
     AP_PASSWORD = "ryancito1337"
 
@@ -744,14 +740,11 @@ def configure_wifi():
 
     print("")
     print("Wi-Fi connection priority:")
-    print("  1. iPhone:", IPHONE_SSID or "(not configured)")
-    print("  2. Home:", HOME_SSID or "(not configured)")
-    print("  3. Fallback AP:", AP_SSID)
+    print("  1. Home:", HOME_SSID or "(not configured)")
+    print("  2. Fallback AP:", AP_SSID)
     print("")
 
-    if connect_to_wifi(IPHONE_SSID, IPHONE_PASSWORD, "iPhone hotspot"):
-        in_ap_mode = False
-    elif connect_to_wifi(HOME_SSID, HOME_PASSWORD, "home Wi-Fi"):
+    if connect_to_wifi(HOME_SSID, HOME_PASSWORD, "home Wi-Fi"):
         in_ap_mode = False
     else:
         start_survey_ap()
