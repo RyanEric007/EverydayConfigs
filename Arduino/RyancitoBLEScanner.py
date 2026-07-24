@@ -33,6 +33,13 @@ SCAN_WINDOW_US = 30_000
 ACTIVE_SCAN = True
 MAX_DEVICES = 80
 
+# Approximate BLE proximity thresholds. RSSI is affected by walls, antennas,
+# pockets, orientation, and interference, so these are zones—not measurements.
+RSSI_15_FEET = -75
+RSSI_10_FEET = -70
+RSSI_5_FEET = -62
+RSSI_NEXT_TO = -50
+
 ORANGE_PIN = 48
 RGB_RED_PIN = 46
 RGB_GREEN_PIN = 0
@@ -52,6 +59,7 @@ in_ap_mode = False
 ble = bluetooth.BLE()
 devices = {}
 scan_done = False
+strongest_rssi = -127
 
 _IRQ_SCAN_RESULT = const(5)
 _IRQ_SCAN_DONE = const(6)
@@ -169,6 +177,33 @@ def signal_bar(rssi):
     return "     "
 
 
+def proximity_from_rssi(rssi):
+    if rssi < RSSI_15_FEET:
+        return "Beyond ~15 ft", "off"
+    if rssi < RSSI_10_FEET:
+        return "Around 15 ft", "red"
+    if rssi < RSSI_5_FEET:
+        return "Around 10 ft", "yellow"
+    if rssi < RSSI_NEXT_TO:
+        return "Around 5 ft", "green"
+    return "Right next to it", "blue"
+
+
+def set_proximity_led(rssi):
+    zone, color = proximity_from_rssi(rssi)
+    if color == "red":
+        set_rgb(255, 0, 0)
+    elif color == "yellow":
+        set_rgb(255, 150, 0)
+    elif color == "green":
+        set_rgb(0, 255, 0)
+    elif color == "blue":
+        set_rgb(0, 0, 255)
+    else:
+        led_off()
+    return zone
+
+
 def decode_field(payload, wanted_type):
     i = 0
     while i + 1 < len(payload):
@@ -229,7 +264,7 @@ def decode_services(payload):
 
 
 def ble_irq(event, data):
-    global scan_done
+    global scan_done, strongest_rssi
     if event == _IRQ_SCAN_RESULT:
         addr_type, addr, adv_type, rssi, adv_data = data
         mac = format_mac(addr)
@@ -237,6 +272,12 @@ def ble_irq(event, data):
         name = decode_name(payload)
         manufacturer, manufacturer_data = decode_manufacturer(payload)
         services = decode_services(payload)
+
+        # The strongest signal is normally the closest observed transmitter.
+        # Require a 2 dBm improvement to reduce rapid color flicker.
+        if rssi >= strongest_rssi + 2:
+            strongest_rssi = int(rssi)
+            set_proximity_led(strongest_rssi)
 
         old = devices.get(mac)
         if old is None:
@@ -269,9 +310,10 @@ def ble_irq(event, data):
 
 
 def scan_devices():
-    global devices, scan_done
+    global devices, scan_done, strongest_rssi
     devices = {}
     scan_done = False
+    strongest_rssi = -127
     gc.collect()
     set_rgb(50, 0, 80)
     orange_off()
@@ -304,13 +346,17 @@ def scan_devices():
         result = list(devices.values())
         result.sort(key=lambda item: item["best_rssi"], reverse=True)
         print("Found {} BLE devices.".format(len(result)))
+        if result:
+            zone = set_proximity_led(result[0]["best_rssi"])
+            print("Strongest signal:", result[0]["best_rssi"], "dBm ->", zone)
         return result[:MAX_DEVICES], None
     except Exception as e:
         print_exception("BLE scan failed:", e)
         return [], str(e)
     finally:
         orange_on()
-        led_off()
+        if strongest_rssi < RSSI_15_FEET:
+            led_off()
         gc.collect()
 
 
@@ -461,15 +507,19 @@ def build_device_rows(found):
             details.append(item["services"])
         if not details:
             details.append("No decoded data")
+        proximity, color = proximity_from_rssi(item["best_rssi"])
 
         rows.append(
             "<tr>"
             "<td>{}</td><td>{}</td><td class='bar'>{}</td>"
+            "<td><span class='dot {}'></span>{}</td>"
             "<td>{}</td><td>{}</td><td>{}</td><td>{}</td>"
             "</tr>".format(
                 html_escape(name),
                 item["best_rssi"],
                 html_escape(signal_bar(item["best_rssi"])),
+                color,
+                html_escape(proximity),
                 item["seen"],
                 html_escape(item["type"]),
                 html_escape(item["mac"]),
@@ -478,7 +528,7 @@ def build_device_rows(found):
         )
     if not rows:
         rows.append(
-            "<tr><td colspan='7' class='center'>No BLE devices found</td></tr>")
+            "<tr><td colspan='8' class='center'>No BLE devices found</td></tr>")
     return "".join(rows)
 
 
@@ -512,6 +562,13 @@ th{{color:#b967ff;background:rgba(185,103,255,.1)}}
 .center{{text-align:center;padding:18px}}
 .error{{border:1px solid #ff6b6b;color:#ffaaaa;padding:10px;border-radius:8px;margin-bottom:16px}}
 .note{{opacity:.65;font-size:.84em;line-height:1.5}}
+.legend{{display:flex;flex-wrap:wrap;gap:12px;margin:10px 0 14px;font-size:.84em}}
+.dot{{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;box-shadow:0 0 8px currentColor}}
+.dot.red{{background:#ff334d;color:#ff334d}}
+.dot.yellow{{background:#ffd23f;color:#ffd23f}}
+.dot.green{{background:#2cff88;color:#2cff88}}
+.dot.blue{{background:#3f8cff;color:#3f8cff}}
+.dot.off{{background:#555;color:#555}}
 .btn-row{{text-align:center;margin-top:10px}}
 .btn{{display:inline-block;text-decoration:none;color:#00fff7;border:2px solid #00fff7;padding:10px 22px;border-radius:8px;margin:5px;background:transparent;font-family:inherit;font-size:1em;cursor:pointer}}
 .footer{{text-align:center;padding:14px;font-size:.8em;opacity:.45}}
@@ -554,9 +611,16 @@ td,.bar{{color:black!important}}
 
 <div class="card">
 <h2>Nearby BLE Devices ({count} found)</h2>
+<div class="legend">
+<span><i class="dot red"></i>~15 ft</span>
+<span><i class="dot yellow"></i>~10 ft</span>
+<span><i class="dot green"></i>~5 ft</span>
+<span><i class="dot blue"></i>right next to it</span>
+<span><i class="dot off"></i>beyond ~15 ft</span>
+</div>
 <div style="overflow-x:auto">
 <table>
-<thead><tr><th>Name</th><th>RSSI</th><th>Signal</th><th>Seen</th><th>Address Type</th><th>Address</th><th>Advertisement Details</th></tr></thead>
+<thead><tr><th>Name</th><th>RSSI</th><th>Signal</th><th>Proximity</th><th>Seen</th><th>Address Type</th><th>Address</th><th>Advertisement Details</th></tr></thead>
 <tbody>{device_rows}</tbody>
 </table>
 </div>
