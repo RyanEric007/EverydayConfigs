@@ -1,13 +1,15 @@
 const $=selector=>document.querySelector(selector);
 const settings=Object.assign({
   theme:"dark",minRssi:-100,pollMs:500,wifiMs:60000,
+  maxSessions:0,
   showHidden:false,showWifi:true,showBle:true,compact:false,
-  hidden:[],collapsed:[],bleSort:"latestRssi",bleSortDir:-1,
+  hidden:[],hiddenBands:[],collapsed:[],bleSort:"latestRssi",bleSortDir:-1,
   wifiSort:"rssi",wifiSortDir:-1,printOrientation:"landscape",
   caseId:"",investigator:"",locationLabel:"",caseNote:""
 },JSON.parse(localStorage.getItem("sentinal-ui")||"{}"));
 const hidden=new Set(settings.hidden||[]);
-const worker=new Worker("/worker.js?v=3.6");
+const hiddenBands=new Set(settings.hiddenBands||[]);
+const worker=new Worker("/worker.js?v=4.4");
 const rows=new Map();
 const deviceStore=new Map();
 let devices=[];
@@ -19,16 +21,22 @@ let wifiNetworks=[];
 let wifiScanNumber=0;
 let wifiDirty=false;
 let paused=false;
+let connectionStatus="Starting";
 const MAX_RENDER_ROWS=300;
 let detailSelection=null;
 const wifiRows=new Map();
+const annotations=new Map();
+let savedSessions=[];
 
 function saveSettings(){
   settings.hidden=[...hidden];
+  settings.hiddenBands=[...hiddenBands];
   localStorage.setItem("sentinal-ui",JSON.stringify(settings));
   worker.postMessage({
     type:"settings",pollMs:Number(settings.pollMs),
-    wifiMs:Number(settings.wifiMs),showWifi:settings.showWifi
+    wifiMs:Number(settings.wifiMs),showWifi:settings.showWifi,
+    maxSessions:Number(settings.maxSessions),
+    caseMetadata:caseContext()
   });
   dirty=true;
 }
@@ -48,13 +56,13 @@ function wifiTrend(network){
   return[`→ ${delta>=0?"+":""}${delta} dB stable`,"steady",delta];
 }
 function proximity(device){
-  if(Date.now()-device.lastSeen>5000)return["Old / not recently seen","off"];
+  if(Date.now()-device.lastSeen>5000)return["Stale","off"];
   const rssi=device.latestRssi;
-  if(rssi>=-50)return["Right next to it","blue"];
-  if(rssi>=-70)return["Around 10 ft or closer","green"];
-  if(rssi>=-78)return["Around 10–20 ft","yellow"];
-  if(rssi>=-85)return["Around 20–30 ft","red"];
-  return["Beyond ~30 ft","off"];
+  if(rssi>=-50)return["Immediate","blue"];
+  if(rssi>=-70)return["Strong","green"];
+  if(rssi>=-78)return["Medium","yellow"];
+  if(rssi>=-85)return["Weak","red"];
+  return["Very weak","off"];
 }
 function signalWidth(rssi){
   return Math.max(0,Math.min(100,Math.round((rssi+100)*1.8)));
@@ -79,6 +87,9 @@ function classifyClient(){
   if(/Windows/i.test(ua))return"Windows PC";
   if(/Linux/i.test(ua))return"Linux computer";
   return"Browser client";
+}
+function updateConnectionClient(){
+  $("#connectionClient").textContent=`${classifyClient()} · ${connectionStatus}`;
 }
 function caseContext(){
   return{
@@ -118,6 +129,7 @@ function visibleDevices(){
   const result=devices.filter(device=>{
     if(device.latestRssi<Number(settings.minRssi))return false;
     if(hidden.has(device.id)&&!settings.showHidden)return false;
+    if(hiddenBands.has(proximity(device)[1]))return false;
     if(!query)return true;
     return `${device.name} ${device.mac} ${device.manufacturer} ${device.services.join(" ")}`.toLowerCase().includes(query);
   });
@@ -150,9 +162,13 @@ function updateRow(device){
   const cells=row.children;
   const movement=trend(device);
   const distance=proximity(device);
+  const annotation=annotations.get(`BLE:${device.mac}`);
+  const marker=annotation?.watchlist?"★ ":
+    annotation?.classification==="trusted"?"✓ ":
+    annotation?.classification==="investigate"?"! ":"";
   const details=[device.manufacturer,...device.services].filter(Boolean).join(" | ")||"No decoded data";
   const values=[
-    device.name,`${device.latestRssi}`,null,movement[0],distance[0],
+    `${marker}${annotation?.friendlyName||device.name}`,`${device.latestRssi}`,null,movement[0],distance[0],
     device.sightings,addressType(device.addrType),device.mac,details,null
   ];
   for(let i=0;i<values.length;i++){
@@ -194,8 +210,12 @@ function renderWifi(){
       wifiRows.set(network.bssid,row);
     }
     const movement=wifiTrend(network);
+    const annotation=annotations.get(`Wi-Fi:${network.bssid}`);
+    const marker=annotation?.watchlist?"★ ":
+      annotation?.classification==="trusted"?"✓ ":
+      annotation?.classification==="investigate"?"! ":"";
     const cells=row.children;
-    const values=[network.hidden?"Hidden":network.ssid,network.rssi,null,movement[0],network.channel,network.security,network.bssid];
+    const values=[`${marker}${annotation?.friendlyName||(network.hidden?"Hidden":network.ssid)}`,network.rssi,null,movement[0],network.channel,network.security,network.bssid];
     for(let i=0;i<values.length;i++){
       if(values[i]===null)continue;
       if(cells[i].textContent!==String(values[i]))cells[i].textContent=values[i];
@@ -236,9 +256,92 @@ function render(){
   $("#observationCount").textContent=observationCount;
   $("#droppedCount").textContent=dropped;
   renderWifi();
+  renderInsights();
+}
+
+function renderInsights(){
+  const insights=[];
+  const add=(title,detail,radio,identifier)=>insights.push({title,detail,radio,identifier});
+  const now=Date.now();
+  for(const device of devices){
+    const annotation=annotations.get(`BLE:${device.mac}`);
+    if(annotation?.watchlist)add("Watchlist observation",`${annotation.friendlyName||device.name} · ${device.mac} · ${device.latestRssi} dBm`,"BLE",device.mac);
+    if(annotation?.classification==="trusted"&&!annotation.watchlist)continue;
+    if(now-device.firstSeen<30000)add("New BLE identifier",`${device.name} · ${device.mac} first appeared recently`,"BLE",device.mac);
+    if(device.latestRssi>=-55)add("Strong BLE signal",`${device.name} · ${device.mac} at ${device.latestRssi} dBm`,"BLE",device.mac);
+    if(device.flags&2)add("Advertisement changed",`${device.name} · ${device.mac} emitted changed advertisement data`,"BLE",device.mac);
+  }
+  const ssids=new Map();
+  for(const network of wifiNetworks){
+    const annotation=annotations.get(`Wi-Fi:${network.bssid}`);
+    if(annotation?.watchlist)add("Watchlist observation",`${annotation.friendlyName||network.ssid} · ${network.bssid} · ${network.rssi} dBm`,"WiFi",network.bssid);
+    if(annotation?.classification==="trusted"&&!annotation.watchlist)continue;
+    if(network.security==="Open")add("Open WiFi advertised",`${network.ssid} · ${network.bssid}`,"WiFi",network.bssid);
+    if(network.previousSecurity&&network.previousSecurity!==network.security)
+      add("WiFi security changed",`${network.bssid}: ${network.previousSecurity} → ${network.security}`,"WiFi",network.bssid);
+    if(network.previousChannel!==undefined&&network.previousChannel!==network.channel)
+      add("WiFi channel changed",`${network.bssid}: channel ${network.previousChannel} → ${network.channel}`,"WiFi",network.bssid);
+    if(!network.hidden){
+      const list=ssids.get(network.ssid)||[];list.push(network);ssids.set(network.ssid,list);
+    }
+  }
+  for(const [ssid,list] of ssids)if(list.length>1){
+    const security=new Set(list.map(network=>network.security));
+    add("Duplicate SSID",`${ssid} is advertised by ${list.length} BSSIDs${security.size>1?" with different security modes":""}`,"WiFi",list[0].bssid);
+  }
+  const unique=[];
+  const seen=new Set();
+  for(const insight of insights){
+    const key=`${insight.title}|${insight.detail}`;
+    if(!seen.has(key)){seen.add(key);unique.push(insight);}
+  }
+  const shown=unique.slice(0,12);
+  $("#insightCount").textContent=unique.length;
+  $("#insightList").innerHTML=shown.length?shown.map((insight,index)=>
+    `<button class="insight" data-insight="${index}" title="Open related device details"><strong>${escapeHtml(insight.title)}</strong><span>${escapeHtml(insight.detail)}</span></button>`
+  ).join(""):'<p class="evidence-note">No explainable changes currently meet the insight rules.</p>';
+  $("#insightList").querySelectorAll("[data-insight]").forEach(button=>button.onclick=()=>{
+    const insight=shown[Number(button.dataset.insight)];
+    if(insight.radio==="BLE"){
+      const device=devices.find(item=>item.mac===insight.identifier);
+      if(device)openBleDetail(device);
+    }else{
+      const network=wifiNetworks.find(item=>item.bssid===insight.identifier);
+      if(network)openWifiDetail(network);
+    }
+  });
 }
 setInterval(render,300);
 setInterval(()=>{if(!paused)dirty=true;},1000);
+
+function resetLiveView(message){
+  sessionId=message.sessionId;
+  deviceStore.clear();devices=[];rows.clear();annotations.clear();
+  wifiNetworks=[];wifiScanNumber=0;wifiRows.clear();
+  observationCount=0;dropped=0;wifiDirty=true;dirty=true;
+  $("#deviceRows").textContent="";
+  $("#wifiRows").textContent="";
+  $("#deviceCount").textContent="0";
+  $("#visibleCount").textContent="0";
+  $("#observationCount").textContent="0";
+  $("#droppedCount").textContent="0";
+  $("#wifiCount").textContent="0";
+  $("#insightCount").textContent="0";
+  $("#emptyState").hidden=false;
+  $("#wifiEmpty").hidden=false;
+  $("#insightList").innerHTML='<p class="evidence-note">No explainable changes currently meet the insight rules.</p>';
+  if(document.body.classList.contains("detail-open"))closeDetail();
+  savedSessions=[];
+  if(message.reason==="new")
+    $("#exportStatus").textContent=`New session started · ${message.sessionId}`;
+  else if(message.reason==="cleared"){
+    $("#exportStatus").textContent="All browser evidence cleared; a fresh session is active.";
+    $("#sessionList").innerHTML='<p class="evidence-note">Previous sessions were deleted.</p>';
+    $("#sessionAnalysis").textContent="";
+  }else if(message.reason==="collector-reset")
+    $("#exportStatus").textContent="Collector restarted; a fresh browser session was created.";
+  refreshStorage();
+}
 
 worker.onmessage=event=>{
   const message=event.data;
@@ -250,16 +353,25 @@ worker.onmessage=event=>{
     dirty=true;
   }else if(message.type==="connection"){
     document.body.dataset.connection=message.state;
+    if(!paused){
+      connectionStatus=message.latencyMs==null?message.state:
+        `${message.state} · ${message.latencyMs} ms`;
+      updateConnectionClient();
+    }
   }else if(message.type==="session"){
-    sessionId=message.sessionId;deviceStore.clear();devices=[];rows.clear();
-    wifiNetworks=[];wifiScanNumber=0;wifiRows.clear();$("#wifiRows").textContent="";
-    dirty=true;
+    resetLiveView(message);
   }else if(message.type==="wifi"){
     if(message.scan!==wifiScanNumber){
       const previous=new Map(wifiNetworks.map(network=>[network.bssid,network.rssi]));
+      const previousNetworks=new Map(wifiNetworks.map(network=>[network.bssid,network]));
       for(const network of message.networks){
         const prior=previous.get(network.bssid);
         if(prior!==undefined)network.previousRssi=prior;
+        const priorNetwork=previousNetworks.get(network.bssid);
+        if(priorNetwork){
+          network.previousSecurity=priorNetwork.security;
+          network.previousChannel=priorNetwork.channel;
+        }
       }
       wifiNetworks=message.networks;
       wifiScanNumber=message.scan;
@@ -268,13 +380,13 @@ worker.onmessage=event=>{
     if(message.manual){
       const button=$("#scanWifiNow");
       button.disabled=false;button.textContent=`Scanned ${message.networks.length} networks`;
-      setTimeout(()=>button.textContent="Scan Wi-Fi now",1800);
+      setTimeout(()=>button.textContent="Scan WiFi now",1800);
     }
   }else if(message.type==="wifiError"){
     if(message.manual){
       const button=$("#scanWifiNow");
       button.disabled=false;button.textContent="Scan failed";
-      setTimeout(()=>button.textContent="Scan Wi-Fi now",1800);
+      setTimeout(()=>button.textContent="Scan WiFi now",1800);
     }
   }else if(message.type==="export"){
     prepareExport(message);
@@ -285,6 +397,25 @@ worker.onmessage=event=>{
        detailSelection.identifier===message.identifier){
       renderDetailHistory(message.records,message.radio,message.error);
     }
+  }else if(message.type==="annotation"){
+    if(message.annotation?.deviceId){
+      annotations.set(message.annotation.deviceId,message.annotation);
+      if(detailSelection?.deviceId===message.annotation.deviceId)
+        showAnnotation(message.annotation);
+      wifiDirty=true;dirty=true;
+    }
+  }else if(message.type==="sessions"){
+    savedSessions=message.sessions||[];
+    renderSessionList(message.currentSessionId);
+  }else if(message.type==="sessionAnalysis"){
+    renderSessionComparison(message.results||[]);
+  }else if(message.type==="sessionError"){
+    $("#sessionAnalysis").textContent=message.error;
+  }else if(message.type==="clearError"){
+    $("#exportStatus").textContent=`Clear failed: ${message.error}`;
+  }else if(message.type==="evidenceCleared"){
+    $("#exportStatus").textContent="Browser evidence cleared. Reloading dashboard…";
+    setTimeout(()=>location.reload(),250);
   }
 };
 
@@ -294,23 +425,26 @@ function fieldRows(fields){
 }
 
 function openBleDetail(device){
-  detailSelection={radio:"BLE",identifier:device.mac};
+  detailSelection={radio:"BLE",identifier:device.mac,deviceId:`BLE:${device.mac}`};
   const movement=trend(device),distance=proximity(device);
   $("#detailType").textContent="BLE OBSERVATION";
   $("#detailTitle").textContent=device.name||"Unnamed";
   $("#detailSummary").innerHTML=`
     <article><strong>${device.latestRssi} dBm</strong><span>Latest RSSI</span></article>
     <article><strong>${device.strongestRssi} dBm</strong><span>Strongest RSSI</span></article>
-    <article><strong>${device.sightings}</strong><span>Sightings</span></article>`;
+    <article><strong>${device.sightings}</strong><span>Recorded observations</span></article>`;
   $("#detailFields").innerHTML=fieldRows({
     "Address":device.mac,
     "Address type":addressType(device.addrType),
-    "Movement":movement[0],
-    "Proximity estimate":distance[0],
+    "Signal trend":movement[0],
+    "Signal band":distance[0],
     "First seen":formatDate(device.firstSeen),
     "Last seen":formatDate(device.lastSeen),
     "Manufacturer ID":device.manufacturer||"Not advertised",
     "Service UUIDs":device.services.length?device.services.join(", "):"None advertised",
+    "Service data UUIDs":device.serviceData?.length?device.serviceData.join(", "):"None advertised",
+    "TX power":device.txPower==null?"Not advertised":`${device.txPower} dBm`,
+    "Appearance":device.appearance==null?"Not advertised":`0x${device.appearance.toString(16).padStart(4,"0").toUpperCase()}`,
     "Evidence flags":device.flags
   });
   $("#detailRaw").textContent=spacedHex(device.latestAdvHex);
@@ -322,12 +456,13 @@ function openBleDetail(device){
   $("#detailChart").textContent="";
   document.body.classList.add("detail-open");
   worker.postMessage({type:"history",radio:"BLE",identifier:device.mac});
+  worker.postMessage({type:"annotationGet",deviceId:detailSelection.deviceId});
 }
 
 function openWifiDetail(network){
-  detailSelection={radio:"Wi-Fi",identifier:network.bssid};
+  detailSelection={radio:"Wi-Fi",identifier:network.bssid,deviceId:`Wi-Fi:${network.bssid}`};
   const movement=wifiTrend(network);
-  $("#detailType").textContent="WI-FI OBSERVATION";
+  $("#detailType").textContent="WIFI OBSERVATION";
   $("#detailTitle").textContent=network.hidden?"Hidden network":network.ssid;
   $("#detailSummary").innerHTML=`
     <article><strong>${network.rssi} dBm</strong><span>Signal</span></article>
@@ -346,12 +481,21 @@ function openWifiDetail(network){
     "Survey number":network.scan,
     "Browser received":formatDate(network.receivedAt)
   });
-  $("#detailRaw").textContent="Wi-Fi scan results do not include frame payloads.";
+  $("#detailRaw").textContent="WiFi scan results do not include frame payloads.";
   $("#decodedFields").innerHTML="<article>The standard MicroPython WLAN scan exposes SSID, BSSID, channel, RSSI, security, and hidden status—not raw 802.11 frames.</article>";
   $("#detailHistory").textContent="Loading browser evidence…";
   $("#detailChart").textContent="";
   document.body.classList.add("detail-open");
   worker.postMessage({type:"history",radio:"Wi-Fi",identifier:network.bssid});
+  worker.postMessage({type:"annotationGet",deviceId:detailSelection.deviceId});
+}
+
+function showAnnotation(annotation={}){
+  $("#annotationName").value=annotation.friendlyName||"";
+  $("#annotationClass").value=annotation.classification||"unknown";
+  $("#annotationWatch").checked=!!annotation.watchlist;
+  $("#annotationTags").value=(annotation.tags||[]).join(", ");
+  $("#annotationNote").value=annotation.note||"";
 }
 
 function renderDetailHistory(records,radio,error){
@@ -377,9 +521,9 @@ function renderDetailHistory(records,radio,error){
       <polyline points="${points}"></polyline>
     </svg>`;
   $("#detailHistory").innerHTML=records.slice(-20).reverse().map(record=>{
-    const when=formatDate(record.receivedAt);
+    const when=formatDate(record.estimatedObservedAt||record.receivedAt);
     const detail=radio==="BLE"?
-      `${record.rssi} dBm · seq ${record.seq} · flags ${record.flags}`:
+      `${record.rssi} dBm · seq ${record.seq} · flags ${record.flags} · ${record.timestampSource||"browser receipt"}${record.timingUncertaintyMs==null?"":` · ≤${record.timingUncertaintyMs} ms uncertainty`}`:
       `${record.rssi} dBm · channel ${record.channel} · ${record.security}`;
     return `<article><strong>${escapeHtml(when)}</strong><br>${escapeHtml(detail)}</article>`;
   }).join("");
@@ -588,13 +732,34 @@ $("#saveCardImage").onclick=async()=>{
 document.addEventListener("keydown",event=>{
   if(event.key==="Escape"&&document.body.classList.contains("detail-open"))
     closeDetail();
+  if(event.key==="Escape"&&document.body.classList.contains("sessions-open"))
+    document.body.classList.remove("sessions-open");
 });
 
 async function prepareExport(message){
   let collector={};
   try{collector=await fetch("/api/status",{cache:"no-store"}).then(r=>r.json());}
   catch(error){collector={error:String(error)};}
+  const summaries=new Map();
+  for(const observation of message.observations){
+    const key=`${observation.addrType}:${observation.mac}`;
+    const summary=summaries.get(key)||{
+      id:key,mac:observation.mac,addrType:observation.addrType,
+      firstSeen:observation.estimatedObservedAt||observation.receivedAt,
+      lastSeen:observation.estimatedObservedAt||observation.receivedAt,
+      strongestRssi:observation.rssi,latestRssi:observation.rssi,
+      recordedObservations:0,advertisementChanges:0
+    };
+    summary.lastSeen=observation.estimatedObservedAt||observation.receivedAt;
+    summary.latestRssi=observation.rssi;
+    summary.strongestRssi=Math.max(summary.strongestRssi,observation.rssi);
+    summary.recordedObservations++;
+    if(observation.flags&2)summary.advertisementChanges++;
+    summaries.set(key,summary);
+  }
   const metadata={
+    evidenceSchema:"RyancitoSentinal Evidence",
+    schemaVersion:2,
     sessionId:message.sessionId,
     sessionStartTime:new Date(message.sessionStartTime).toISOString(),
     sessionEndTime:new Date(message.sessionEndTime).toISOString(),
@@ -607,8 +772,15 @@ async function prepareExport(message){
       bleObservations:message.observations,
       wifiObservations:message.wifiObservations
     },
-    derived:{devices},
-    annotations:[caseContext()]
+    timestampProvenance:{
+      esp32Field:"deviceMs",
+      browserReceiptField:"receivedAt",
+      estimatedWallClockField:"estimatedObservedAt",
+      uncertaintyField:"timingUncertaintyMs"
+    },
+    derived:{devices:[...summaries.values()]},
+    annotations:{case:message.session?.case||caseContext(),devices:message.annotations||[]},
+    hashProcedure:"SHA-256 of UTF-8 JSON.stringify(document) before the top-level sha256 property is added"
   };
   if(message.format==="json"){
     const canonical=JSON.stringify(metadata);
@@ -624,12 +796,16 @@ async function prepareExport(message){
       "Wi-Fi",o.sessionId,o.scan,new Date(o.receivedAt).toISOString(),o.bssid,
       o.rssi,o.channel,o.security,"","","SSID: "+o.ssid
     ].map(value=>`"${String(value).replaceAll('"','""')}"`).join(","));
+    for(const annotation of message.annotations||[])lines.push([
+      "Annotation",annotation.sessionId,"",new Date(annotation.updatedAt||Date.now()).toISOString(),
+      annotation.deviceId,"","","","","",JSON.stringify(annotation)
+    ].map(value=>`"${String(value??"").replaceAll('"','""')}"`).join(","));
     const body=lines.join("\r\n");
     const hash=await sha256(body);
     download(`RyancitoSentinal-${message.sessionId}.csv`,"text/csv",
       body+`\r\n# SHA-256,"${hash}"\r\n`);
   }
-  $("#exportStatus").textContent=`Export ready — ${message.observations.length} BLE and ${(message.wifiObservations||[]).length} Wi-Fi records`;
+  $("#exportStatus").textContent=`Export ready — ${message.observations.length} BLE and ${(message.wifiObservations||[]).length} WiFi records`;
 }
 
 async function sha256(text){
@@ -683,6 +859,97 @@ function download(name,type,content){
   setTimeout(()=>URL.revokeObjectURL(link.href),1000);
 }
 
+function renderSessionList(currentId){
+  const container=$("#sessionList");
+  if(!savedSessions.length){
+    container.innerHTML='<p class="evidence-note">No saved sessions.</p>';return;
+  }
+  container.innerHTML=savedSessions.map(session=>{
+    const active=session.id===currentId;
+    const end=session.endTime?formatDate(session.endTime):"Active";
+    return `<article class="session-row" data-session="${escapeHtml(session.id)}">
+      <input class="session-select" type="checkbox" value="${escapeHtml(session.id)}">
+      <div><strong>${escapeHtml(session.name||(active?"Current session":formatDate(session.startTime)))}</strong>
+      <span>${escapeHtml(session.id)}<br>${escapeHtml(formatDate(session.startTime))} → ${escapeHtml(end)}</span></div>
+      <span>${session.observationCount||0} BLE · ${session.wifiObservationCount||0} WiFi · ${session.dropped||0} dropped</span>
+      <div class="session-actions">
+        <button data-review-session="${escapeHtml(session.id)}">Review</button>
+        <button data-rename-session="${escapeHtml(session.id)}">Rename</button>
+        <button data-export-session="${escapeHtml(session.id)}">JSON</button>
+        <button data-delete-session="${escapeHtml(session.id)}" ${active?"disabled":""}>Delete</button>
+      </div>
+    </article>`;
+  }).join("");
+  container.querySelectorAll("[data-export-session]").forEach(button=>button.onclick=()=>
+    worker.postMessage({type:"export",format:"json",sessionId:button.dataset.exportSession}));
+  container.querySelectorAll("[data-review-session]").forEach(button=>button.onclick=()=>
+    worker.postMessage({type:"sessionAnalysis",sessionIds:[button.dataset.reviewSession]}));
+  container.querySelectorAll("[data-rename-session]").forEach(button=>button.onclick=()=>{
+    const session=savedSessions.find(item=>item.id===button.dataset.renameSession);
+    const name=prompt("Session name",session?.name||"");
+    if(name!==null)worker.postMessage({type:"renameSession",sessionId:button.dataset.renameSession,name:name.trim()});
+  });
+  container.querySelectorAll("[data-delete-session]").forEach(button=>button.onclick=()=>{
+    if(confirm("Delete this session and all of its browser evidence?"))
+      worker.postMessage({type:"deleteSession",sessionId:button.dataset.deleteSession});
+  });
+}
+
+function renderSessionComparison(results){
+  if(!results.length){$("#sessionAnalysis").textContent="No session data.";return;}
+  const ids=result=>new Set(result.identifiers||[]);
+  const timeline=result=>(result.timeline||[]).slice(0,20);
+  if(results.length===1){
+    const result=results[0],identifiers=ids(result);
+    $("#sessionAnalysis").innerHTML=`<h3>Session review</h3>
+      <article class="insight"><strong>${escapeHtml(result.id)}</strong><span>${result.bleCount} BLE observations · ${result.wifiCount} WiFi observations · ${identifiers.size} identifiers</span></article>
+      <h3>Timeline preview</h3><article class="insight"><span>${
+        timeline(result).map(event=>`${escapeHtml(formatDate(event.at))} — ${escapeHtml(event.label)}`).join("<br>")||"No events"
+      }</span></article>`;
+    return;
+  }
+  const left=ids(results[0]),right=ids(results[1]);
+  const shared=[...left].filter(id=>right.has(id));
+  const onlyLeft=[...left].filter(id=>!right.has(id));
+  const onlyRight=[...right].filter(id=>!left.has(id));
+  $("#sessionAnalysis").innerHTML=`
+    <h3>Comparison</h3>
+    <div class="comparison-grid">
+      <article><strong>Only first (${onlyLeft.length})</strong><pre>${escapeHtml(onlyLeft.join("\n")||"None")}</pre></article>
+      <article><strong>Shared (${shared.length})</strong><pre>${escapeHtml(shared.join("\n")||"None")}</pre></article>
+      <article><strong>Only second (${onlyRight.length})</strong><pre>${escapeHtml(onlyRight.join("\n")||"None")}</pre></article>
+    </div>
+    <h3>Timeline preview</h3>
+    ${results.map(result=>`<article class="insight"><strong>${escapeHtml(result.id)}</strong><span>${
+      timeline(result).map(event=>`${escapeHtml(formatDate(event.at))} — ${escapeHtml(event.label)}`).join("<br>")||"No events"
+    }</span></article>`).join("")}`;
+}
+
+async function refreshStorage(){
+  try{
+    if(!navigator.storage?.estimate)throw new Error("Storage estimate unavailable");
+    const estimate=await navigator.storage.estimate();
+    const used=estimate.usage||0,quota=estimate.quota||0;
+    const percent=quota?used/quota*100:0;
+    $("#storageStatus").textContent=`Browser evidence storage: ${(used/1048576).toFixed(1)} MB of ${(quota/1048576).toFixed(0)} MB (${percent.toFixed(1)}%)`;
+    $("#storageStatus").classList.toggle("danger",percent>=85);
+  }catch(error){$("#storageStatus").textContent=String(error.message||error);}
+}
+
+async function importAndVerify(file){
+  const text=await file.text();
+  const evidence=JSON.parse(text);
+  const expected=evidence.sha256;
+  if(!expected)throw new Error("No SHA-256 field found");
+  delete evidence.sha256;
+  const actual=await sha256(JSON.stringify(evidence));
+  const verified=actual.toLowerCase()===String(expected).toLowerCase();
+  $("#exportStatus").textContent=verified?
+    `Verified ✓ ${file.name} · session ${evidence.sessionId||"unknown"}`:
+    `Modified or invalid ✕ ${file.name}`;
+  if(!verified)throw new Error(`Hash mismatch. Expected ${expected}; calculated ${actual}`);
+}
+
 async function refreshDiagnostics(){
   try{
     const status=await fetch("/api/status",{cache:"no-store"}).then(r=>r.json());
@@ -701,20 +968,21 @@ function applySettings(){
   $("#theme").value=settings.theme;
   $("#minRssi").value=String(settings.minRssi);
   $("#pollMs").value=String(settings.pollMs);
-  $("#showHiddenTop").checked=settings.showHidden;
   $("#showWifi").checked=settings.showWifi;
   $("#showBle").checked=settings.showBle;
   $("#compact").checked=settings.compact;
   $("#wifiMs").value=String(settings.wifiMs);
+  $("#maxSessions").value=String(settings.maxSessions);
   $("#printOrientation").value=settings.printOrientation;
   $("#caseId").value=settings.caseId;
   $("#investigator").value=settings.investigator;
   $("#locationLabel").value=settings.locationLabel;
   $("#caseNote").value=settings.caseNote;
-  $("#contextClient").textContent=classifyClient();
+  updateConnectionClient();
   $(".wifi-card").hidden=!settings.showWifi;
   $(".devices-card").hidden=!settings.showBle;
   document.body.classList.toggle("compact",settings.compact);
+  updateBandFilters();
   updatePrintOrientation();
   wifiDirty=true;
   saveSettings();
@@ -724,11 +992,11 @@ $("#closeSettings").onclick=$("#backdrop").onclick=()=>document.body.classList.r
 $("#theme").onchange=event=>{settings.theme=event.target.value;applySettings();};
 $("#minRssi").onchange=event=>{settings.minRssi=Number(event.target.value);applySettings();};
 $("#pollMs").onchange=event=>{settings.pollMs=Number(event.target.value);applySettings();};
-$("#showHiddenTop").onchange=event=>{settings.showHidden=event.target.checked;applySettings();};
 $("#showWifi").onchange=event=>{settings.showWifi=event.target.checked;applySettings();};
 $("#showBle").onchange=event=>{settings.showBle=event.target.checked;applySettings();};
 $("#compact").onchange=event=>{settings.compact=event.target.checked;applySettings();};
 $("#wifiMs").onchange=event=>{settings.wifiMs=Number(event.target.value);applySettings();};
+$("#maxSessions").onchange=event=>{settings.maxSessions=Number(event.target.value);applySettings();};
 for(const [selector,key] of [
   ["#caseId","caseId"],["#investigator","investigator"],
   ["#locationLabel","locationLabel"],["#caseNote","caseNote"]
@@ -740,17 +1008,81 @@ $("#printOrientation").onchange=event=>{
   applySettings();
 };
 $("#search").oninput=()=>dirty=true;
-$("#newSession").onclick=()=>worker.postMessage({type:"newSession"});
+$("#newSession").onclick=()=>{
+  $("#exportStatus").textContent="Closing the current session and starting a new one…";
+  worker.postMessage({type:"newSession"});
+};
+$("#saveAnnotation").onclick=()=>{
+  if(!detailSelection)return;
+  const annotation={
+    deviceId:detailSelection.deviceId,
+    friendlyName:$("#annotationName").value.trim(),
+    classification:$("#annotationClass").value,
+    watchlist:$("#annotationWatch").checked,
+    tags:$("#annotationTags").value.split(",").map(value=>value.trim()).filter(Boolean),
+    note:$("#annotationNote").value.trim()
+  };
+  worker.postMessage({type:"annotationSave",annotation});
+  $("#saveAnnotation").textContent="Saved ✓";
+  setTimeout(()=>$("#saveAnnotation").textContent="Save annotation",1400);
+};
 $("#scanWifiNow").onclick=event=>{
   event.currentTarget.disabled=true;
   event.currentTarget.textContent="Scanning…";
   worker.postMessage({type:"forceWifi"});
 };
 $("#clearBrowserData").onclick=()=>{
-  if(confirm("Delete all browser evidence?"))worker.postMessage({type:"clear"});
+  if(confirm("Permanently delete every saved session, BLE/WiFi observation, and annotation from this browser? This cannot be undone.")){
+    $("#exportStatus").textContent="Clearing all browser evidence…";
+    worker.postMessage({type:"clear"});
+  }
+};
+
+function updateBandFilters(){
+  document.querySelectorAll(".band-filter").forEach(button=>{
+    const active=!hiddenBands.has(button.dataset.band);
+    button.classList.toggle("active",active);
+    button.setAttribute("aria-pressed",String(active));
+  });
+}
+document.querySelectorAll(".band-filter").forEach(button=>button.onclick=()=>{
+  const band=button.dataset.band;
+  if(hiddenBands.has(band))hiddenBands.delete(band);else hiddenBands.add(band);
+  updateBandFilters();
+  saveSettings();
+});
+$("#clearBleFilters").onclick=()=>{
+  hiddenBands.clear();
+  hidden.clear();
+  settings.showHidden=false;
+  settings.minRssi=-100;
+  $("#search").value="";
+  updateBandFilters();
+  applySettings();
 };
 $("#exportJson").onclick=()=>worker.postMessage({type:"export",format:"json"});
 $("#exportCsv").onclick=()=>worker.postMessage({type:"export",format:"csv"});
+$("#openSessions").onclick=()=>{
+  document.body.classList.remove("drawer-open");
+  document.body.classList.add("sessions-open");
+  worker.postMessage({type:"listSessions"});
+};
+$("#refreshSessions").onclick=()=>worker.postMessage({type:"listSessions"});
+$("#closeSessions").onclick=$("#closeSessionsBottom").onclick=$("#sessionBackdrop").onclick=()=>
+  document.body.classList.remove("sessions-open");
+$("#compareSessions").onclick=()=>{
+  const ids=[...document.querySelectorAll(".session-select:checked")].map(input=>input.value);
+  if(ids.length!==2){$("#sessionAnalysis").textContent="Select exactly two sessions.";return;}
+  worker.postMessage({type:"sessionAnalysis",sessionIds:ids});
+};
+$("#importEvidence").onclick=()=>$("#evidenceFile").click();
+$("#evidenceFile").onchange=async event=>{
+  const file=event.target.files[0];if(!file)return;
+  $("#exportStatus").textContent=`Verifying ${file.name}…`;
+  try{await importAndVerify(file);}
+  catch(error){$("#exportStatus").textContent=`Verification failed: ${error.message||error}`;}
+  event.target.value="";
+};
 
 function printReport(){
   document.body.classList.remove("drawer-open");
@@ -808,8 +1140,16 @@ document.querySelectorAll("th[data-wifi-sort]").forEach(th=>th.onclick=()=>{
 $("#pauseDisplay").onclick=event=>{
   paused=!paused;
   event.target.textContent=paused?"Resume display":"Pause display";
+  if(paused){
+    connectionStatus="Display paused · recording continues";
+  }else{
+    connectionStatus="Live";
+  }
+  updateConnectionClient();
   if(!paused){dirty=true;render();}
 };
 updateSortIndicators();
 updatePrintOrientation();
 applySettings();
+refreshStorage();
+setInterval(refreshStorage,30000);

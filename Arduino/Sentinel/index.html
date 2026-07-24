@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>RyancitoSentinal</title>
-  <link rel="stylesheet" href="/style.css?v=3.6">
+  <link rel="stylesheet" href="/style.css?v=4.4">
 </head>
 <body>
   <header>
-    <h1>RyancitoSentinal — BLE Evidence Survey</h1>
+    <h1>RyancitoSentinal — Wireless Evidence Survey</h1>
     <button id="settingsButton" class="icon-button" aria-label="Settings">⚙</button>
   </header>
 
@@ -21,7 +21,7 @@
       <div id="statusContent" class="collapsible">
        <div class="status-grid">
         <div>
-          <label>Client</label><strong id="contextClient">Detecting…</strong>
+          <label>Client · Connection</label><strong id="connectionClient">Detecting… · Starting</strong>
           <label>Access Point</label><strong id="collectorSsid">—</strong>
           <label>IP</label><strong id="collectorIp">—</strong>
         </div>
@@ -39,12 +39,24 @@
       </div>
     </section>
 
+    <section class="card insights-card">
+      <div class="card-heading">
+        <h2>Explainable Insights (<span id="insightCount">0</span>)</h2>
+        <button class="collapse-button" data-target="insightsContent" aria-label="Collapse Insights">⌃</button>
+      </div>
+      <div id="insightsContent" class="collapsible">
+        <div id="insightList" class="insight-list">
+          <p class="evidence-note">Insights will appear as observations accumulate. They describe measurable changes across BLE and WiFi and never claim that a device is malicious.</p>
+        </div>
+      </div>
+    </section>
+
     <section class="card wifi-card">
       <div class="card-heading">
-        <h2>Nearby Wi-Fi Networks (<span id="wifiCount">0</span> found)</h2>
+        <h2>WiFi Networks (<span id="wifiCount">0</span> found)</h2>
         <div class="heading-actions">
-          <button id="scanWifiNow" class="small-button">Scan Wi-Fi now</button>
-          <button class="collapse-button" data-target="wifiContent" aria-label="Collapse Wi-Fi">⌃</button>
+          <button id="scanWifiNow" class="small-button">Scan WiFi now</button>
+          <button class="collapse-button" data-target="wifiContent" aria-label="Collapse WiFi">⌃</button>
         </div>
       </div>
       <div id="wifiContent" class="collapsible">
@@ -56,25 +68,25 @@
             </tr></thead>
             <tbody id="wifiRows"></tbody>
           </table>
-          <div id="wifiEmpty">Waiting for Wi-Fi survey…</div>
+          <div id="wifiEmpty">Waiting for WiFi survey…</div>
         </div>
-        <p class="evidence-note">Wi-Fi surveys are cached and intentionally less frequent so BLE evidence collection stays responsive.</p>
+        <p class="evidence-note">WiFi surveys are cached and intentionally less frequent so BLE evidence collection stays responsive.</p>
       </div>
     </section>
 
     <section class="card devices-card">
       <div class="card-heading">
-        <h2>Nearby BLE Devices (<span id="visibleCount">0</span> found)</h2>
-        <div><label class="show-ignored"><input id="showHiddenTop" type="checkbox"> Show ignored</label>
-        <button class="collapse-button" data-target="bleContent" aria-label="Collapse Bluetooth">⌃</button></div>
+        <h2>BLE Devices (<span id="visibleCount">0</span> found)</h2>
+        <button class="collapse-button" data-target="bleContent" aria-label="Collapse Bluetooth">⌃</button>
       </div>
       <div id="bleContent" class="collapsible">
-      <div class="legend">
-        <span><i class="dot red"></i>~20–30 ft</span>
-        <span><i class="dot yellow"></i>~10–20 ft</span>
-        <span><i class="dot green"></i>~10 ft or closer</span>
-        <span><i class="dot blue"></i>right next to it</span>
-        <span><i class="dot off"></i>beyond ~30 ft / old</span>
+      <div class="legend" aria-label="BLE signal-band display filters">
+        <button class="band-filter active" data-band="blue" aria-pressed="true" title="Show or hide immediate BLE devices"><i class="dot blue"></i>immediate</button>
+        <button class="band-filter active" data-band="green" aria-pressed="true" title="Show or hide strong BLE devices"><i class="dot green"></i>strong</button>
+        <button class="band-filter active" data-band="yellow" aria-pressed="true" title="Show or hide medium BLE devices"><i class="dot yellow"></i>medium</button>
+        <button class="band-filter active" data-band="red" aria-pressed="true" title="Show or hide weak BLE devices"><i class="dot red"></i>weak</button>
+        <button class="band-filter active" data-band="off" aria-pressed="true" title="Show or hide very weak or stale BLE devices"><i class="dot off"></i>very weak / stale</button>
+        <button id="clearBleFilters" class="band-reset" title="Restore all signal bands, ignored devices, RSSI, and search filters">Clear filters</button>
       </div>
       <div class="toolbar">
         <input id="search" type="search" placeholder="Search name, address, manufacturer…">
@@ -85,8 +97,8 @@
         <table>
           <thead>
             <tr>
-              <th data-ble-sort="name">Name</th><th data-ble-sort="latestRssi">RSSI</th><th>Signal</th><th>Trend</th>
-              <th data-ble-sort="latestRssi">Proximity</th><th data-ble-sort="sightings">Seen</th><th data-ble-sort="addrType">Address Type</th>
+              <th data-ble-sort="name">Name</th><th data-ble-sort="latestRssi">RSSI</th><th>Signal</th><th>Signal trend</th>
+              <th data-ble-sort="latestRssi">Signal band</th><th data-ble-sort="sightings">Recorded</th><th data-ble-sort="addrType">Address Type</th>
               <th data-ble-sort="mac">Address</th><th data-ble-sort="manufacturer">Advertisement Details</th><th class="filter-cell">Filter</th>
             </tr>
           </thead>
@@ -122,17 +134,25 @@
         <option value="1000">1 second</option><option value="2000">2 seconds</option>
       </select>
     </label>
-    <label class="check"><input id="showWifi" type="checkbox"> Show Wi-Fi section</label>
+    <label class="check"><input id="showWifi" type="checkbox"> Show WiFi section</label>
     <label class="check"><input id="showBle" type="checkbox"> Show Bluetooth section</label>
     <label class="check"><input id="compact" type="checkbox"> Compact layout</label>
     <h3>Collection</h3>
-    <label>Wi-Fi survey
+    <label>WiFi survey
       <select id="wifiMs">
         <option value="30000">Every 30 seconds</option>
         <option value="60000">Every minute</option>
         <option value="120000">Every 2 minutes</option>
         <option value="300000">Every 5 minutes</option>
         <option value="0">Off</option>
+      </select>
+    </label>
+    <label>Session retention
+      <select id="maxSessions">
+        <option value="0">Keep all</option>
+        <option value="10">Keep newest 10</option>
+        <option value="25">Keep newest 25</option>
+        <option value="50">Keep newest 50</option>
       </select>
     </label>
     <h3>Evidence</h3>
@@ -149,19 +169,23 @@
     <div class="evidence-actions">
       <button id="exportJson">Export evidence (JSON)</button>
       <button id="exportCsv">Export CSV</button>
+      <button id="openSessions">Session library</button>
+      <button id="importEvidence">Import / verify</button>
+      <input id="evidenceFile" type="file" accept=".json,application/json" hidden>
     </div>
     <div id="exportStatus" class="export-status">Ready to export</div>
+    <div id="storageStatus" class="export-status">Checking browser storage…</div>
     <button id="newSession">Start new session</button>
     <button id="clearBrowserData" class="danger">Clear browser evidence</button>
     <h3>Help</h3>
     <div class="help-guide">
       <details open>
         <summary>Getting started</summary>
-        <p>Keep this page open while surveying. BLE records continuously. Wi-Fi scans on its selected schedule or when you tap <strong>Scan Wi-Fi now</strong>.</p>
+        <p>Keep this page open while surveying. BLE records continuously. WiFi scans on its selected schedule or when you tap <strong>Scan WiFi now</strong>.</p>
       </details>
       <details>
         <summary>RSSI, proximity, and movement</summary>
-        <p>RSSI is received signal strength in dBm; values closer to zero are stronger. Wi-Fi trends compare consecutive completed surveys: at least +4 dB is stronger, −4 dB is weaker, and smaller changes are stable. Distance labels and BLE movement arrows are estimates affected by walls, bodies, antennas, and reflections—not exact locations or directions.</p>
+        <p>RSSI is received signal strength in dBm; values closer to zero are stronger. Tap a colored BLE legend button to show or hide that band; this changes the display only and never deletes recorded evidence. Gray includes very weak devices and devices not seen for five seconds. <strong>Clear filters</strong> restores every band, ignored device, RSSI level, and search result. WiFi trends compare consecutive completed surveys: at least +4 dB is stronger, −4 dB is weaker, and smaller changes are stable. BLE signal bands and trends are affected by walls, bodies, antennas, and reflections—they are not exact distance, location, direction, or proof of movement.</p>
       </details>
       <details>
         <summary>Pause and ignored devices</summary>
@@ -169,15 +193,19 @@
       </details>
       <details>
         <summary>Sessions and browser storage</summary>
-        <p><strong>Start new session</strong> begins a separate evidence collection without deleting earlier browser records. <strong>Clear browser evidence</strong> permanently removes all saved sessions from this browser.</p>
+        <p><strong>Start new session</strong> closes the current session and begins another. Session Library can review, rename, compare, export, or delete saved sessions. Retention is disabled by default. <strong>Clear browser evidence</strong> permanently removes everything from this browser.</p>
       </details>
       <details>
         <summary>Exports and reports</summary>
-        <p>JSON is the complete machine-readable evidence package. CSV is best for spreadsheets. Print / PDF creates a readable report. Saved detail-card images document one selected observation.</p>
+        <p>JSON is the complete machine-readable evidence package with timestamp provenance, annotations, schema version, and SHA-256. Import / verify checks whether a JSON export changed. CSV is best for spreadsheets. Print / PDF creates a readable report. Saved detail-card images document one selected observation.</p>
       </details>
       <details>
-        <summary>Wi-Fi and BLE limitations</summary>
-        <p>Wi-Fi security is the access point's advertised mode, not proof that it is trustworthy. Randomized BLE addresses may rotate. A sighting does not prove a person's identity or continued presence.</p>
+        <summary>Insights and annotations</summary>
+        <p>Insights report explainable facts such as a new identifier, strong signal, changed advertisement, open WiFi, duplicate SSID, or changed channel/security. Tap an insight to open the related device card. They never declare a device malicious. Detail-card annotations are analyst-supplied and remain separate from observations.</p>
+      </details>
+      <details>
+        <summary>WiFi and BLE limitations</summary>
+        <p>WiFi security is the access point's advertised mode, not proof that it is trustworthy. Randomized BLE addresses may rotate. A sighting does not prove a person's identity or continued presence.</p>
       </details>
       <details>
         <summary>Evidence handling</summary>
@@ -202,13 +230,44 @@
     <h3>Recent evidence</h3>
     <div id="detailChart" class="detail-chart"></div>
     <div id="detailHistory" class="detail-history">Loading…</div>
+    <h3>Analyst annotation</h3>
+    <div class="annotation-grid">
+      <label>Friendly name <input id="annotationName" maxlength="80"></label>
+      <label>Classification
+        <select id="annotationClass">
+          <option value="unknown">Unknown</option>
+          <option value="trusted">Trusted</option>
+          <option value="investigate">Investigate</option>
+        </select>
+      </label>
+      <label class="check"><input id="annotationWatch" type="checkbox"> Watchlist</label>
+      <label>Tags <input id="annotationTags" maxlength="160" placeholder="comma, separated"></label>
+      <label class="annotation-note">Notes <textarea id="annotationNote" maxlength="1200" rows="3"></textarea></label>
+    </div>
     <div class="detail-actions">
+      <button id="saveAnnotation">Save annotation</button>
       <button id="copyRaw">Copy raw data</button>
       <button id="saveCardImage">Save card image</button>
       <button id="closeDetailBottom">Close</button>
     </div>
   </section>
 
-  <script src="/app.js?v=3.6"></script>
+  <div id="sessionBackdrop" class="session-backdrop"></div>
+  <section id="sessionModal" class="session-modal" role="dialog" aria-modal="true" aria-labelledby="sessionTitle">
+    <div class="detail-title">
+      <div><span>EVIDENCE WORKSPACE</span><h2 id="sessionTitle">Session Library</h2></div>
+      <button id="closeSessions" class="detail-close" aria-label="Close sessions">×</button>
+    </div>
+    <p class="evidence-note">Select two sessions to compare their observed identifiers. Historical sessions can be exported or deleted individually.</p>
+    <div id="sessionList" class="session-list">Loading sessions…</div>
+    <div class="detail-actions">
+      <button id="compareSessions">Compare selected</button>
+      <button id="refreshSessions">Refresh</button>
+      <button id="closeSessionsBottom">Close</button>
+    </div>
+    <div id="sessionAnalysis" class="session-analysis"></div>
+  </section>
+
+  <script src="/app.js?v=4.4"></script>
 </body>
 </html>

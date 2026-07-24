@@ -1,4 +1,4 @@
-# RyancitoSentinal Optimized
+# RyancitoSentinal v4
 
 ## Files to upload to the Nano ESP32
 
@@ -18,6 +18,10 @@ The collector tries `DEFAULT_SSID` from `secret.py`. If that fails, it starts
 `HOME_PASSWORD` names are accepted temporarily for migration. The dashboard
 URL is printed in the REPL. Fallback AP mode normally uses
 `http://192.168.4.1/`.
+
+`AP_PASSWORD` must contain at least eight characters. A shorter configured
+password never creates an open access point; firmware uses `ryancito1337` as
+the secure recovery password and prints a warning in the REPL.
 
 ## Collector behavior
 
@@ -68,6 +72,8 @@ Flag bits:
 - The table renders at most 300 rows while all raw evidence remains in
   IndexedDB.
 - Click sortable table headings to change field and direction.
+- BLE color chips are persistent display filters. Turning a band off hides its
+  rows without deleting or excluding its raw evidence from exports.
 - Pausing freezes the display only; background polling and evidence recording
   continue.
 - Settings includes a collapsible plain-language help guide covering controls,
@@ -75,6 +81,20 @@ Flag bits:
 - JSON export separates observed data, derived device summaries, and
   annotations.
 - JSON and CSV exports include SHA-256 evidence hashes.
+- Session Library reviews, renames, compares, exports, and selectively deletes
+  browser sessions.
+- New Session resets both live radios while preserving closed sessions. Clear
+  Browser Evidence deletes all sessions, observations, and annotations, then
+  reloads the dashboard into one empty fresh session.
+- JSON imports can be verified against their embedded SHA-256 hash.
+- BLE records separate ESP32 monotonic time, browser receipt time, estimated
+  wall-clock time, timestamp source, and timing uncertainty.
+- Analyst annotations, classifications, tags, and watchlists remain separate
+  from observed data.
+- Explainable insights report measurable changes without claiming malicious
+  intent.
+- Browser storage usage and optional session retention are visible in
+  Settings.
 
 ## Client identification
 

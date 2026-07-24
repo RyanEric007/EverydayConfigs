@@ -50,11 +50,12 @@ MIN_RSSI = -100
 RSSI_DELTA_DB = 5
 HEARTBEAT_MS = 1_000
 WIFI_SCAN_MIN_INTERVAL_MS = 30_000
+FORCED_WIFI_MIN_INTERVAL_MS = 5_000
 PROXIMITY_STALE_MS = 5_000
-RSSI_RIGHT_NEXT_TO = -50
-RSSI_WITHIN_10_FT = -70
-RSSI_10_TO_20_FT = -78
-RSSI_20_TO_30_FT = -85
+RSSI_IMMEDIATE = -50
+RSSI_STRONG = -70
+RSSI_MEDIUM = -78
+RSSI_WEAK = -85
 
 SCAN_INTERVAL_US = 30_000
 SCAN_WINDOW_US = 30_000
@@ -62,7 +63,7 @@ ACTIVE_SCAN = True
 
 LOG_LEVEL = 1  # 0=quiet, 1=status, 2=debug
 FIRMWARE_NAME = "RyancitoSentinal Collector"
-FIRMWARE_VERSION = "2.4.0"
+FIRMWARE_VERSION = "3.0.0"
 
 ORANGE_PIN = 48
 RGB_RED_PIN = 46
@@ -93,6 +94,7 @@ raw_read = 0
 raw_write = 0
 raw_count = 0
 raw_dropped = 0
+raw_high_water = 0
 
 # Evidence ring. Index is sequence modulo capacity.
 evidence_ring = [None] * EVIDENCE_RING_SIZE
@@ -105,6 +107,8 @@ wifi_cache = []
 wifi_scan_number = 0
 wifi_last_scan_ms = time.ticks_add(BOOT_MS, -WIFI_SCAN_MIN_INTERVAL_MS)
 wifi_scan_duration_ms = 0
+wifi_last_forced_ms = time.ticks_add(BOOT_MS, -FORCED_WIFI_MIN_INTERVAL_MS)
+http_request_count = 0
 
 
 def log(level, *parts):
@@ -142,7 +146,7 @@ def payload_fingerprint(payload):
 
 
 def ble_irq(event, data):
-    global raw_write, raw_count, raw_dropped
+    global raw_write, raw_count, raw_dropped, raw_high_water
     if event != _IRQ_SCAN_RESULT:
         return
 
@@ -162,6 +166,8 @@ def ble_irq(event, data):
     )
     raw_write = (raw_write + 1) % RAW_RING_SIZE
     raw_count += 1
+    if raw_count > raw_high_water:
+        raw_high_water = raw_count
 
 
 def pop_raw():
@@ -272,14 +278,14 @@ def update_proximity_led():
             if strongest_rssi is None or rssi > strongest_rssi:
                 strongest_rssi = rssi
 
-    if strongest_rssi is None or strongest_rssi < RSSI_20_TO_30_FT:
-        set_rgb(28, 28, 28)       # gray: stale or beyond ~30 ft
-    elif strongest_rssi < RSSI_10_TO_20_FT:
-        set_rgb(255, 0, 0)        # red: approximately 20–30 ft
-    elif strongest_rssi < RSSI_WITHIN_10_FT:
-        set_rgb(255, 150, 0)      # yellow: approximately 10–20 ft
-    elif strongest_rssi < RSSI_RIGHT_NEXT_TO:
-        set_rgb(0, 255, 0)        # green: approximately 10 ft or closer
+    if strongest_rssi is None or strongest_rssi < RSSI_WEAK:
+        set_rgb(28, 28, 28)       # gray: stale or very weak
+    elif strongest_rssi < RSSI_MEDIUM:
+        set_rgb(255, 0, 0)        # red: weak
+    elif strongest_rssi < RSSI_STRONG:
+        set_rgb(255, 150, 0)      # yellow: medium
+    elif strongest_rssi < RSSI_IMMEDIATE:
+        set_rgb(0, 255, 0)        # green: strong
     else:
         set_rgb(0, 0, 255)        # blue: immediately nearby
 
@@ -333,8 +339,11 @@ def wifi_security(authmode):
 
 def scan_wifi_if_due(force=False):
     global wifi_cache, wifi_scan_number, wifi_last_scan_ms
-    global wifi_scan_duration_ms
+    global wifi_scan_duration_ms, wifi_last_forced_ms
     now = time.ticks_ms()
+    if (force and time.ticks_diff(now, wifi_last_forced_ms) <
+            FORCED_WIFI_MIN_INTERVAL_MS):
+        return False
     if (not force and wifi_cache and
             time.ticks_diff(now, wifi_last_scan_ms) <
             WIFI_SCAN_MIN_INTERVAL_MS):
@@ -375,9 +384,12 @@ def scan_wifi_if_due(force=False):
         wifi_cache = results
         wifi_scan_number += 1
         wifi_last_scan_ms = time.ticks_ms()
+        if force:
+            wifi_last_forced_ms = wifi_last_scan_ms
     finally:
         ble.gap_scan(0, SCAN_INTERVAL_US, SCAN_WINDOW_US, ACTIVE_SCAN)
         wifi_scan_duration_ms = time.ticks_diff(time.ticks_ms(), started)
+    return True
 
 
 def connect_default():
@@ -414,21 +426,17 @@ def connect_default():
 def start_fallback_ap():
     global active_interface, connected_ssid
     ap.active(True)
-    if len(AP_PASSWORD) >= 8:
-        try:
-            ap.config(
-                essid=AP_SSID,
-                password=AP_PASSWORD,
-                authmode=network.AUTH_WPA2_PSK,
-            )
-        except Exception:
-            ap.config(ssid=AP_SSID, password=AP_PASSWORD)
-    else:
-        log(1, "AP password is too short; starting an open AP.")
-        try:
-            ap.config(essid=AP_SSID, authmode=network.AUTH_OPEN)
-        except Exception:
-            ap.config(ssid=AP_SSID)
+    password = AP_PASSWORD if len(AP_PASSWORD) >= 8 else "ryancito1337"
+    if password != AP_PASSWORD:
+        log(1, "AP password was too short; using the secure fallback.")
+    try:
+        ap.config(
+            essid=AP_SSID,
+            password=password,
+            authmode=network.AUTH_WPA2_PSK,
+        )
+    except Exception:
+        ap.config(ssid=AP_SSID, password=password)
     active_interface = ap
     connected_ssid = AP_SSID
 
@@ -506,27 +514,31 @@ def diagnostics():
         "uptime_ms": time.ticks_diff(time.ticks_ms(), BOOT_MS),
         "ssid": connected_ssid,
         "ip": active_interface.ifconfig()[0],
+        "network_mode": "fallback-ap" if active_interface is ap else "station",
+        "access_point_secured": True if active_interface is ap else None,
         "next_seq": next_sequence,
         "oldest_seq": oldest_sequence(),
         "raw_buffer_used": raw_count,
         "raw_buffer_capacity": RAW_RING_SIZE,
         "raw_dropped": raw_dropped,
+        "raw_buffer_high_water": raw_high_water,
         "evidence_capacity": EVIDENCE_RING_SIZE,
         "evidence_overwritten": evidence_overwritten,
         "tracked_devices": len(device_state),
         "wifi_scan_number": wifi_scan_number,
         "wifi_networks": len(wifi_cache),
         "wifi_scan_duration_ms": wifi_scan_duration_ms,
+        "http_request_count": http_request_count,
         "free_heap": gc.mem_free(),
         "config": {
             "min_rssi": MIN_RSSI,
             "rssi_delta_db": RSSI_DELTA_DB,
             "heartbeat_ms": HEARTBEAT_MS,
             "proximity_stale_ms": PROXIMITY_STALE_MS,
-            "rssi_right_next_to": RSSI_RIGHT_NEXT_TO,
-            "rssi_within_10_ft": RSSI_WITHIN_10_FT,
-            "rssi_10_to_20_ft": RSSI_10_TO_20_FT,
-            "rssi_20_to_30_ft": RSSI_20_TO_30_FT,
+            "rssi_immediate": RSSI_IMMEDIATE,
+            "rssi_strong": RSSI_STRONG,
+            "rssi_medium": RSSI_MEDIUM,
+            "rssi_weak": RSSI_WEAK,
             "active_scan": ACTIVE_SCAN,
             "scan_interval_us": SCAN_INTERVAL_US,
             "scan_window_us": SCAN_WINDOW_US,
@@ -535,7 +547,9 @@ def diagnostics():
 
 
 def handle_http(client):
+    global http_request_count
     try:
+        http_request_count += 1
         client.settimeout(2)
         request = client.recv(1024)
         if not request:
@@ -576,13 +590,15 @@ def handle_http(client):
 
         if path == "/api/wifi":
             force = query_value(target, "force", "0") == "1"
-            scan_wifi_if_due(force=force)
+            performed = scan_wifi_if_due(force=force)
             send_bytes(
                 client, "200 OK", "application/json",
                 ujson.dumps({
                     "scan": wifi_scan_number,
                     "captured_ms": time.ticks_diff(wifi_last_scan_ms, BOOT_MS),
                     "duration_ms": wifi_scan_duration_ms,
+                    "performed": performed,
+                    "forced_cooldown_ms": FORCED_WIFI_MIN_INTERVAL_MS,
                     "items": wifi_cache,
                 }))
             return
