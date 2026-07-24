@@ -1,5 +1,29 @@
 # RyancitoSentinal v4
 
+## v4.6 BLE forensic analysis
+
+- Added the official IEEE MA-L OUI CSV link and import instructions to the
+  built-in Help guide.
+- Added decoded-field and raw-byte diffs for the latest distinct BLE
+  advertisements.
+- Added distinct-payload history with occurrence counts and time windows.
+- Added minimum, maximum, average, median, and signal-volatility statistics.
+- Added an observation-gap presence timeline with an explicit evidentiary
+  limitation.
+- Added persistent bookmarks for specific advertisement changes; bookmark
+  details remain analyst-derived annotations and are exported with evidence.
+
+## v4.5 manufacturer identification
+
+- Added browser-side decoding for common Bluetooth SIG company identifiers.
+- Added persistent import and clearing of IEEE MA-L or simple OUI/vendor CSV
+  databases for WiFi BSSID lookup.
+- Added manufacturer source and confidence language to BLE and WiFi detail
+  cards.
+- Added derived manufacturer information to JSON and CSV evidence exports.
+- Locally administered WiFi addresses are explicitly identified as unsuitable
+  for OUI vendor lookup.
+
 ## v4.4 status and filter ordering
 
 - Status now presents Client before Connection (`Mac · Live · latency`).

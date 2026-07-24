@@ -9,7 +9,7 @@ const settings=Object.assign({
 },JSON.parse(localStorage.getItem("sentinal-ui")||"{}"));
 const hidden=new Set(settings.hidden||[]);
 const hiddenBands=new Set(settings.hiddenBands||[]);
-const worker=new Worker("/worker.js?v=4.4");
+const worker=new Worker("/worker.js?v=4.6");
 const rows=new Map();
 const deviceStore=new Map();
 let devices=[];
@@ -27,6 +27,19 @@ let detailSelection=null;
 const wifiRows=new Map();
 const annotations=new Map();
 let savedSessions=[];
+let latestDetailAnalysis=null;
+let detailAnnotationReady=false;
+let vendorDb=null;
+const ouiVendors=new Map();
+const BLE_COMPANIES={
+  "0x0000":"Ericsson AB","0x0001":"Nokia Mobile Phones","0x0002":"Intel Corp.",
+  "0x0004":"Toshiba Corp.","0x0006":"Microsoft","0x0008":"Motorola",
+  "0x000A":"Qualcomm Technologies International","0x000D":"Texas Instruments",
+  "0x000F":"Broadcom Corporation","0x001D":"Qualcomm","0x0025":"NXP",
+  "0x0030":"STMicroelectronics","0x004C":"Apple, Inc.",
+  "0x0059":"Nordic Semiconductor","0x0075":"Samsung Electronics",
+  "0x0087":"Garmin International","0x00E0":"Google LLC"
+};
 
 function saveSettings(){
   settings.hidden=[...hidden];
@@ -69,6 +82,100 @@ function signalWidth(rssi){
 }
 function addressType(value){
   return({0:"Public",1:"Random",2:"Public ID",3:"Random ID"})[value]||`Type ${value}`;
+}
+function bleCompanyInfo(id){
+  const hex=String(id||"").replace(/^0x/i,"").toUpperCase();
+  const key=hex?`0x${hex}`:"";
+  return{
+    id:key||null,
+    name:BLE_COMPANIES[key]||null,
+    source:key?"Bluetooth SIG company identifier":"Not advertised",
+    confidence:key?"Company-level; device model unknown":"Unavailable"
+  };
+}
+function manufacturerIdFromHex(hex){
+  const field=decodeAdvertisement(hex).find(item=>item.type==="0xFF");
+  const bytes=field?.data?.split(" ")||[];
+  if(bytes.length<2)return"";
+  return`0x${(parseInt(bytes[1],16)<<8|parseInt(bytes[0],16)).toString(16).padStart(4,"0").toUpperCase()}`;
+}
+function normalizeOui(value){
+  return String(value||"").replace(/[^0-9a-f]/gi,"").slice(0,6).toUpperCase();
+}
+function wifiVendorInfo(mac){
+  const compact=String(mac||"").replace(/[^0-9a-f]/gi,"");
+  const first=parseInt(compact.slice(0,2),16);
+  if(Number.isFinite(first)&&(first&2))
+    return{name:null,source:"Locally administered address",confidence:"Vendor lookup unavailable"};
+  const prefix=normalizeOui(mac),name=ouiVendors.get(prefix)||null;
+  return{
+    name,source:name?`Imported IEEE OUI ${prefix}`:"No matching imported OUI",
+    confidence:name?"Likely interface vendor; product unknown":"Unknown"
+  };
+}
+function openVendorDatabase(){
+  return new Promise((resolve,reject)=>{
+    const request=indexedDB.open("RyancitoSentinalVendors",1);
+    request.onupgradeneeded=()=>{
+      if(!request.result.objectStoreNames.contains("oui"))
+        request.result.createObjectStore("oui",{keyPath:"prefix"});
+    };
+    request.onsuccess=()=>resolve(request.result);
+    request.onerror=()=>reject(request.error);
+  });
+}
+async function loadVendorDatabase(){
+  if(vendorDb)vendorDb.close();
+  vendorDb=await openVendorDatabase();
+  const transaction=vendorDb.transaction("oui");
+  const request=transaction.objectStore("oui").getAll();
+  const records=await new Promise((resolve,reject)=>{
+    request.onsuccess=()=>resolve(request.result);
+    request.onerror=()=>reject(request.error);
+  });
+  ouiVendors.clear();
+  for(const record of records)ouiVendors.set(record.prefix,record.vendor);
+  $("#vendorStatus").textContent=`${Object.keys(BLE_COMPANIES).length} common BLE companies built in · ${ouiVendors.size.toLocaleString()} WiFi OUIs imported`;
+  wifiDirty=true;dirty=true;
+}
+function parseCsvRow(line){
+  const fields=[];let field="",quoted=false;
+  for(let index=0;index<line.length;index++){
+    const char=line[index];
+    if(char==='"'&&quoted&&line[index+1]==='"'){field+='"';index++;}
+    else if(char==='"')quoted=!quoted;
+    else if(char===","&&!quoted){fields.push(field.trim());field="";}
+    else field+=char;
+  }
+  fields.push(field.trim());
+  return fields;
+}
+async function importOuiDatabase(file){
+  const lines=(await file.text()).split(/\r?\n/).filter(Boolean);
+  if(!lines.length)throw new Error("The selected file is empty");
+  const header=parseCsvRow(lines[0]).map(value=>value.toLowerCase());
+  let prefixIndex=header.findIndex(value=>value==="assignment"||value==="oui"||value.includes("prefix"));
+  let vendorIndex=header.findIndex(value=>value.includes("organization name")||value==="vendor"||value==="organization");
+  let start=1;
+  if(prefixIndex<0||vendorIndex<0){prefixIndex=0;vendorIndex=1;start=0;}
+  const records=[];
+  for(let index=start;index<lines.length;index++){
+    const fields=parseCsvRow(lines[index]);
+    const prefix=normalizeOui(fields[prefixIndex]),vendor=(fields[vendorIndex]||"").trim();
+    if(prefix.length===6&&vendor)records.push({prefix,vendor});
+  }
+  if(!records.length)throw new Error("No valid OUI and vendor rows were found");
+  if(!vendorDb)vendorDb=await openVendorDatabase();
+  await new Promise((resolve,reject)=>{
+    const transaction=vendorDb.transaction("oui","readwrite");
+    const store=transaction.objectStore("oui");
+    for(const record of records)store.put(record);
+    transaction.oncomplete=resolve;
+    transaction.onerror=()=>reject(transaction.error);
+    transaction.onabort=()=>reject(transaction.error);
+  });
+  await loadVendorDatabase();
+  return records.length;
 }
 function escapeHtml(value){
   return String(value??"").replace(/[&<>"']/g,char=>({
@@ -131,7 +238,8 @@ function visibleDevices(){
     if(hidden.has(device.id)&&!settings.showHidden)return false;
     if(hiddenBands.has(proximity(device)[1]))return false;
     if(!query)return true;
-    return `${device.name} ${device.mac} ${device.manufacturer} ${device.services.join(" ")}`.toLowerCase().includes(query);
+    const company=bleCompanyInfo(device.manufacturer).name||"";
+    return `${device.name} ${device.mac} ${device.manufacturer} ${company} ${device.services.join(" ")}`.toLowerCase().includes(query);
   });
   const key=settings.bleSort;
   result.sort((a,b)=>{
@@ -166,7 +274,8 @@ function updateRow(device){
   const marker=annotation?.watchlist?"★ ":
     annotation?.classification==="trusted"?"✓ ":
     annotation?.classification==="investigate"?"! ":"";
-  const details=[device.manufacturer,...device.services].filter(Boolean).join(" | ")||"No decoded data";
+  const company=bleCompanyInfo(device.manufacturer);
+  const details=[company.name?`${company.name} (${company.id})`:device.manufacturer,...device.services].filter(Boolean).join(" | ")||"No decoded data";
   const values=[
     `${marker}${annotation?.friendlyName||device.name}`,`${device.latestRssi}`,null,movement[0],distance[0],
     device.sightings,addressType(device.addrType),device.mac,details,null
@@ -202,7 +311,7 @@ function renderWifi(){
     let row=wifiRows.get(network.bssid);
     if(!row){
       row=document.createElement("tr");
-      row.innerHTML="<td></td><td class='rssi'></td><td><span class='signal-track'><i></i></span></td><td></td><td></td><td></td><td></td>";
+      row.innerHTML="<td></td><td class='rssi'></td><td><span class='signal-track'><i></i></span></td><td></td><td></td><td></td><td></td><td></td>";
       row.addEventListener("click",()=>{
         const current=wifiNetworks.find(item=>item.bssid===network.bssid);
         if(current)openWifiDetail(current);
@@ -215,7 +324,8 @@ function renderWifi(){
       annotation?.classification==="trusted"?"✓ ":
       annotation?.classification==="investigate"?"! ":"";
     const cells=row.children;
-    const values=[`${marker}${annotation?.friendlyName||(network.hidden?"Hidden":network.ssid)}`,network.rssi,null,movement[0],network.channel,network.security,network.bssid];
+    const vendor=wifiVendorInfo(network.bssid);
+    const values=[`${marker}${annotation?.friendlyName||(network.hidden?"Hidden":network.ssid)}`,network.rssi,null,movement[0],network.channel,network.security,network.bssid,vendor.name||vendor.source];
     for(let i=0;i<values.length;i++){
       if(values[i]===null)continue;
       if(cells[i].textContent!==String(values[i]))cells[i].textContent=values[i];
@@ -425,6 +535,8 @@ function fieldRows(fields){
 }
 
 function openBleDetail(device){
+  latestDetailAnalysis=null;
+  detailAnnotationReady=false;
   detailSelection={radio:"BLE",identifier:device.mac,deviceId:`BLE:${device.mac}`};
   const movement=trend(device),distance=proximity(device);
   $("#detailType").textContent="BLE OBSERVATION";
@@ -433,6 +545,7 @@ function openBleDetail(device){
     <article><strong>${device.latestRssi} dBm</strong><span>Latest RSSI</span></article>
     <article><strong>${device.strongestRssi} dBm</strong><span>Strongest RSSI</span></article>
     <article><strong>${device.sightings}</strong><span>Recorded observations</span></article>`;
+  const company=bleCompanyInfo(device.manufacturer);
   $("#detailFields").innerHTML=fieldRows({
     "Address":device.mac,
     "Address type":addressType(device.addrType),
@@ -441,6 +554,9 @@ function openBleDetail(device){
     "First seen":formatDate(device.firstSeen),
     "Last seen":formatDate(device.lastSeen),
     "Manufacturer ID":device.manufacturer||"Not advertised",
+    "Assigned company":company.name||"Unknown or not in compact database",
+    "Identification source":company.source,
+    "Identification confidence":company.confidence,
     "Service UUIDs":device.services.length?device.services.join(", "):"None advertised",
     "Service data UUIDs":device.serviceData?.length?device.serviceData.join(", "):"None advertised",
     "TX power":device.txPower==null?"Not advertised":`${device.txPower} dBm`,
@@ -454,12 +570,19 @@ function openBleDetail(device){
   ).join(""):"<article>No decodable advertisement fields.</article>";
   $("#detailHistory").textContent="Loading browser evidence…";
   $("#detailChart").textContent="";
+  $("#forensicStats").textContent="";
+  $("#advertisementDiff").textContent="Loading comparison…";
+  $("#payloadHistory").textContent="";
+  $("#presenceTimeline").textContent="";
+  $("#bookmarkChange").disabled=true;
   document.body.classList.add("detail-open");
   worker.postMessage({type:"history",radio:"BLE",identifier:device.mac});
   worker.postMessage({type:"annotationGet",deviceId:detailSelection.deviceId});
 }
 
 function openWifiDetail(network){
+  latestDetailAnalysis=null;
+  detailAnnotationReady=false;
   detailSelection={radio:"Wi-Fi",identifier:network.bssid,deviceId:`Wi-Fi:${network.bssid}`};
   const movement=wifiTrend(network);
   $("#detailType").textContent="WIFI OBSERVATION";
@@ -468,9 +591,13 @@ function openWifiDetail(network){
     <article><strong>${network.rssi} dBm</strong><span>Signal</span></article>
     <article><strong>${network.channel}</strong><span>Channel</span></article>
     <article><strong>${escapeHtml(network.security)}</strong><span>Security</span></article>`;
+  const vendor=wifiVendorInfo(network.bssid);
   $("#detailFields").innerHTML=fieldRows({
     "SSID":network.hidden?"Hidden":network.ssid,
     "BSSID":network.bssid,
+    "Interface vendor":vendor.name||"Unknown",
+    "Identification source":vendor.source,
+    "Identification confidence":vendor.confidence,
     "RSSI":`${network.rssi} dBm`,
     "Previous survey RSSI":network.previousRssi===undefined?
       "First observation":`${network.previousRssi} dBm`,
@@ -485,17 +612,160 @@ function openWifiDetail(network){
   $("#decodedFields").innerHTML="<article>The standard MicroPython WLAN scan exposes SSID, BSSID, channel, RSSI, security, and hidden status—not raw 802.11 frames.</article>";
   $("#detailHistory").textContent="Loading browser evidence…";
   $("#detailChart").textContent="";
+  $("#forensicStats").textContent="";
+  $("#advertisementDiff").textContent="BLE advertisement comparison is not applicable to WiFi surveys.";
+  $("#payloadHistory").textContent="";
+  $("#presenceTimeline").textContent="";
+  $("#bookmarkChange").disabled=true;
   document.body.classList.add("detail-open");
   worker.postMessage({type:"history",radio:"Wi-Fi",identifier:network.bssid});
   worker.postMessage({type:"annotationGet",deviceId:detailSelection.deviceId});
 }
 
 function showAnnotation(annotation={}){
+  detailAnnotationReady=true;
   $("#annotationName").value=annotation.friendlyName||"";
   $("#annotationClass").value=annotation.classification||"unknown";
   $("#annotationWatch").checked=!!annotation.watchlist;
   $("#annotationTags").value=(annotation.tags||[]).join(", ");
   $("#annotationNote").value=annotation.note||"";
+  renderBookmarks(annotation.bookmarks||[]);
+  $("#bookmarkChange").disabled=!latestDetailAnalysis;
+}
+
+function renderBookmarks(bookmarks=[]){
+  $("#bookmarkList").innerHTML=bookmarks.length?
+    `<h4>Bookmarked changes (${bookmarks.length})</h4>${bookmarks.slice(-8).reverse().map(bookmark=>
+      `<article><strong>${escapeHtml(formatDate(bookmark.bookmarkedAt))}</strong><br>${escapeHtml(bookmark.summary||"Advertisement change")}<br><span>${escapeHtml(bookmark.note||"")}</span></article>`
+    ).join("")}`:"";
+}
+
+function statistics(values){
+  const sorted=[...values].sort((a,b)=>a-b);
+  const average=values.reduce((sum,value)=>sum+value,0)/values.length;
+  const middle=Math.floor(sorted.length/2);
+  const median=sorted.length%2?sorted[middle]:(sorted[middle-1]+sorted[middle])/2;
+  const variance=values.reduce((sum,value)=>sum+(value-average)**2,0)/values.length;
+  return{
+    minimum:sorted[0],maximum:sorted.at(-1),average,median,
+    deviation:Math.sqrt(variance)
+  };
+}
+
+function observationTime(record){
+  return record.estimatedObservedAt||record.receivedAt||0;
+}
+
+function fieldMap(hex){
+  const map=new Map();
+  for(const field of decodeAdvertisement(hex)){
+    const key=`${field.type}:${field.name}`;
+    const existing=map.get(key);
+    map.set(key,existing?`${existing} | ${field.data}`:field.data);
+  }
+  return map;
+}
+
+function compareAdvertisements(previous,current){
+  const before=String(previous.advHex||"").match(/../g)||[];
+  const after=String(current.advHex||"").match(/../g)||[];
+  const byteChanges=[];
+  for(let offset=0;offset<Math.max(before.length,after.length);offset++){
+    if(before[offset]!==after[offset])
+      byteChanges.push({offset,before:before[offset]||"—",after:after[offset]||"—"});
+  }
+  const beforeFields=fieldMap(previous.advHex),afterFields=fieldMap(current.advHex);
+  const fieldChanges=[];
+  for(const key of new Set([...beforeFields.keys(),...afterFields.keys()])){
+    const oldValue=beforeFields.get(key),newValue=afterFields.get(key);
+    if(oldValue===newValue)continue;
+    fieldChanges.push({
+      field:key.split(":").slice(1).join(":"),
+      kind:oldValue===undefined?"Added":newValue===undefined?"Removed":"Modified",
+      before:oldValue||"—",after:newValue||"—"
+    });
+  }
+  return{previous,current,byteChanges,fieldChanges};
+}
+
+function renderForensicAnalysis(records,radio){
+  const rssi=records.map(record=>record.rssi).filter(Number.isFinite);
+  if(rssi.length){
+    const stats=statistics(rssi);
+    $("#forensicStats").innerHTML=`
+      <article><strong>${stats.minimum} dBm</strong><span>Minimum</span></article>
+      <article><strong>${stats.maximum} dBm</strong><span>Maximum</span></article>
+      <article><strong>${stats.average.toFixed(1)} dBm</strong><span>Average</span></article>
+      <article><strong>${stats.median.toFixed(1)} dBm</strong><span>Median</span></article>
+      <article><strong>${stats.deviation.toFixed(1)} dB</strong><span>Volatility (σ)</span></article>`;
+  }
+
+  const ordered=[...records].sort((a,b)=>observationTime(a)-observationTime(b));
+  const intervals=[];
+  for(let index=1;index<ordered.length;index++)
+    intervals.push(observationTime(ordered[index])-observationTime(ordered[index-1]));
+  const positive=intervals.filter(value=>value>0);
+  const typical=positive.length?statistics(positive).median:1000;
+  const gapThreshold=Math.max(5000,typical*3);
+  const gaps=[];
+  for(let index=1;index<ordered.length;index++){
+    const duration=observationTime(ordered[index])-observationTime(ordered[index-1]);
+    if(duration>=gapThreshold)gaps.push({
+      from:observationTime(ordered[index-1]),to:observationTime(ordered[index]),duration
+    });
+  }
+  $("#presenceTimeline").innerHTML=`<h4>Presence timeline</h4>
+    <p>First ${escapeHtml(formatDate(observationTime(ordered[0])))} · Last ${escapeHtml(formatDate(observationTime(ordered.at(-1))))} · ${records.length} stored observations</p>
+    ${gaps.length?gaps.slice(-8).map(gap=>`<article><strong>Observation gap ${(gap.duration/1000).toFixed(1)} s</strong><br>${escapeHtml(formatDate(gap.from))} → ${escapeHtml(formatDate(gap.to))}</article>`).join(""):
+      "<p>No significant observation gaps in the retained history.</p>"}
+    <p class="forensic-caution">A gap means no retained observation; it does not prove the device left the area.</p>`;
+
+  if(radio!=="BLE")return;
+  const payloads=new Map();
+  for(const record of ordered){
+    const key=record.advHex||"";
+    const entry=payloads.get(key)||{
+      hex:key,count:0,first:observationTime(record),last:observationTime(record)
+    };
+    entry.count++;entry.last=observationTime(record);payloads.set(key,entry);
+  }
+  $("#payloadHistory").innerHTML=`<h4>Distinct payloads (${payloads.size})</h4>${
+    [...payloads.values()].sort((a,b)=>b.last-a.last).slice(0,12).map((payload,index)=>
+      `<article><strong>Payload ${index+1} · ${payload.count} observation${payload.count===1?"":"s"}</strong><br>
+      ${escapeHtml(formatDate(payload.first))} → ${escapeHtml(formatDate(payload.last))}
+      <code>${escapeHtml(spacedHex(payload.hex).slice(0,120))}${payload.hex.length>120?"…":""}</code></article>`
+    ).join("")
+  }`;
+
+  let current=null,previous=null;
+  for(let index=ordered.length-1;index>0;index--){
+    if(ordered[index].advHex!==ordered[index-1].advHex){
+      current=ordered[index];previous=ordered[index-1];break;
+    }
+  }
+  if(!current){
+    latestDetailAnalysis=null;
+    $("#advertisementDiff").innerHTML="<h4>Advertisement comparison</h4><p>No distinct consecutive payloads are retained for comparison.</p>";
+    $("#bookmarkChange").disabled=true;
+    return;
+  }
+  const comparison=compareAdvertisements(previous,current);
+  latestDetailAnalysis=comparison;
+  const fieldRowsHtml=comparison.fieldChanges.length?comparison.fieldChanges.map(change=>
+    `<tr class="diff-${change.kind.toLowerCase()}"><td>${escapeHtml(change.kind)}</td><td>${escapeHtml(change.field)}</td><td><code>${escapeHtml(change.before)}</code></td><td><code>${escapeHtml(change.after)}</code></td></tr>`
+  ).join(""):'<tr><td colspan="4">No decoded field changes; differences are in undecoded bytes.</td></tr>';
+  const byteRows=comparison.byteChanges.slice(0,64).map(change=>
+    `<tr><td>${change.offset}</td><td><code>${change.before}</code></td><td><code>${change.after}</code></td></tr>`
+  ).join("");
+  $("#advertisementDiff").innerHTML=`<h4>Latest advertisement change</h4>
+    <p>${escapeHtml(formatDate(observationTime(previous)))} → ${escapeHtml(formatDate(observationTime(current)))}</p>
+    <h5>Decoded field changes</h5>
+    <div class="table-shell"><table class="diff-table"><thead><tr><th>Change</th><th>Field</th><th>Previous</th><th>Current</th></tr></thead><tbody>${fieldRowsHtml}</tbody></table></div>
+    <h5>Raw byte differences (${comparison.byteChanges.length})</h5>
+    <div class="table-shell"><table class="diff-table"><thead><tr><th>Offset</th><th>Previous</th><th>Current</th></tr></thead><tbody>${byteRows}</tbody></table></div>
+    ${comparison.byteChanges.length>64?`<p>Showing the first 64 of ${comparison.byteChanges.length} changed offsets.</p>`:""}
+    <p class="forensic-caution">This is a derived comparison. Legitimate devices often rotate or alternate advertisement data.</p>`;
+  $("#bookmarkChange").disabled=!detailAnnotationReady;
 }
 
 function renderDetailHistory(records,radio,error){
@@ -506,8 +776,13 @@ function renderDetailHistory(records,radio,error){
   if(!records.length){
     $("#detailHistory").textContent="No stored history for this observation.";
     $("#detailChart").textContent="";
+    $("#forensicStats").textContent="";
+    $("#advertisementDiff").textContent="";
+    $("#payloadHistory").textContent="";
+    $("#presenceTimeline").textContent="";
     return;
   }
+  renderForensicAnalysis(records,radio);
   const chartRecords=records.slice(-50);
   const points=chartRecords.map((record,index)=>{
     const x=chartRecords.length===1?50:index*100/(chartRecords.length-1);
@@ -532,6 +807,8 @@ function renderDetailHistory(records,radio,error){
 function closeDetail(){
   document.body.classList.remove("detail-open");
   detailSelection=null;
+  latestDetailAnalysis=null;
+  detailAnnotationReady=false;
 }
 $("#closeDetail").onclick=$("#closeDetailBottom").onclick=$("#detailBackdrop").onclick=closeDetail;
 $("#copyRaw").onclick=async()=>{
@@ -748,14 +1025,35 @@ async function prepareExport(message){
       firstSeen:observation.estimatedObservedAt||observation.receivedAt,
       lastSeen:observation.estimatedObservedAt||observation.receivedAt,
       strongestRssi:observation.rssi,latestRssi:observation.rssi,
-      recordedObservations:0,advertisementChanges:0
+      recordedObservations:0,advertisementChanges:0,
+      manufacturerId:manufacturerIdFromHex(observation.advHex)||null
     };
     summary.lastSeen=observation.estimatedObservedAt||observation.receivedAt;
     summary.latestRssi=observation.rssi;
     summary.strongestRssi=Math.max(summary.strongestRssi,observation.rssi);
     summary.recordedObservations++;
     if(observation.flags&2)summary.advertisementChanges++;
+    if(!summary.manufacturerId)
+      summary.manufacturerId=manufacturerIdFromHex(observation.advHex)||null;
     summaries.set(key,summary);
+  }
+  for(const summary of summaries.values()){
+    const company=bleCompanyInfo(summary.manufacturerId);
+    summary.assignedCompany=company.name;
+    summary.manufacturerLookup={
+      source:company.source,confidence:company.confidence
+    };
+  }
+  const wifiVendorSummaries=[];
+  const seenBssids=new Set();
+  for(const observation of message.wifiObservations){
+    if(seenBssids.has(observation.bssid))continue;
+    seenBssids.add(observation.bssid);
+    const vendor=wifiVendorInfo(observation.bssid);
+    wifiVendorSummaries.push({
+      bssid:observation.bssid,vendor:vendor.name,
+      source:vendor.source,confidence:vendor.confidence
+    });
   }
   const metadata={
     evidenceSchema:"RyancitoSentinal Evidence",
@@ -778,7 +1076,11 @@ async function prepareExport(message){
       estimatedWallClockField:"estimatedObservedAt",
       uncertaintyField:"timingUncertaintyMs"
     },
-    derived:{devices:[...summaries.values()]},
+    derived:{
+      devices:[...summaries.values()],
+      wifiInterfaceVendors:wifiVendorSummaries,
+      manufacturerNotice:"Vendor results are derived and do not establish device model, ownership, identity, or trustworthiness."
+    },
     annotations:{case:message.session?.case||caseContext(),devices:message.annotations||[]},
     hashProcedure:"SHA-256 of UTF-8 JSON.stringify(document) before the top-level sha256 property is added"
   };
@@ -787,18 +1089,24 @@ async function prepareExport(message){
     metadata.sha256=await sha256(canonical);
     download(`RyancitoSentinal-${message.sessionId}.json`,"application/json",JSON.stringify(metadata,null,2));
   }else{
-    const lines=["radio,sessionId,sequence,receivedAt,identifier,rssi,channel,security,advType,flags,raw"];
-    for(const o of message.observations)lines.push([
+    const lines=["radio,sessionId,sequence,receivedAt,identifier,vendor,rssi,channel,security,advType,flags,raw"];
+    for(const o of message.observations){
+      const company=bleCompanyInfo(manufacturerIdFromHex(o.advHex));
+      lines.push([
       "BLE",o.sessionId,o.seq,new Date(o.receivedAt).toISOString(),o.mac,
-      o.rssi,"","",o.advType,o.flags,o.advHex
-    ].map(value=>`"${String(value).replaceAll('"','""')}"`).join(","));
-    for(const o of message.wifiObservations)lines.push([
+      company.name||"",o.rssi,"","",o.advType,o.flags,o.advHex
+      ].map(value=>`"${String(value).replaceAll('"','""')}"`).join(","));
+    }
+    for(const o of message.wifiObservations){
+      const vendor=wifiVendorInfo(o.bssid);
+      lines.push([
       "Wi-Fi",o.sessionId,o.scan,new Date(o.receivedAt).toISOString(),o.bssid,
-      o.rssi,o.channel,o.security,"","","SSID: "+o.ssid
-    ].map(value=>`"${String(value).replaceAll('"','""')}"`).join(","));
+      vendor.name||"",o.rssi,o.channel,o.security,"","","SSID: "+o.ssid
+      ].map(value=>`"${String(value).replaceAll('"','""')}"`).join(","));
+    }
     for(const annotation of message.annotations||[])lines.push([
       "Annotation",annotation.sessionId,"",new Date(annotation.updatedAt||Date.now()).toISOString(),
-      annotation.deviceId,"","","","","",JSON.stringify(annotation)
+      annotation.deviceId,"","","","","","","",JSON.stringify(annotation)
     ].map(value=>`"${String(value??"").replaceAll('"','""')}"`).join(","));
     const body=lines.join("\r\n");
     const hash=await sha256(body);
@@ -1012,19 +1320,49 @@ $("#newSession").onclick=()=>{
   $("#exportStatus").textContent="Closing the current session and starting a new one…";
   worker.postMessage({type:"newSession"});
 };
-$("#saveAnnotation").onclick=()=>{
-  if(!detailSelection)return;
-  const annotation={
+function annotationFromForm(existing={}){
+  return{
     deviceId:detailSelection.deviceId,
     friendlyName:$("#annotationName").value.trim(),
     classification:$("#annotationClass").value,
     watchlist:$("#annotationWatch").checked,
     tags:$("#annotationTags").value.split(",").map(value=>value.trim()).filter(Boolean),
-    note:$("#annotationNote").value.trim()
+    note:$("#annotationNote").value.trim(),
+    bookmarks:existing.bookmarks||[]
   };
+}
+$("#saveAnnotation").onclick=()=>{
+  if(!detailSelection)return;
+  const annotation=annotationFromForm(
+    annotations.get(detailSelection.deviceId)||{});
   worker.postMessage({type:"annotationSave",annotation});
   $("#saveAnnotation").textContent="Saved ✓";
   setTimeout(()=>$("#saveAnnotation").textContent="Save annotation",1400);
+};
+$("#bookmarkChange").onclick=()=>{
+  if(!detailSelection||!latestDetailAnalysis||!detailAnnotationReady)return;
+  const existing=annotations.get(detailSelection.deviceId)||{};
+  const comparison=latestDetailAnalysis;
+  const bookmark={
+    id:`${Date.now()}-${comparison.current.seq||"change"}`,
+    bookmarkedAt:Date.now(),
+    previousObservedAt:observationTime(comparison.previous),
+    currentObservedAt:observationTime(comparison.current),
+    previousSequence:comparison.previous.seq??null,
+    currentSequence:comparison.current.seq??null,
+    previousAdvertisement:comparison.previous.advHex||null,
+    currentAdvertisement:comparison.current.advHex||null,
+    changedByteCount:comparison.byteChanges.length,
+    fieldChanges:comparison.fieldChanges,
+    summary:`${comparison.fieldChanges.length} decoded field change${comparison.fieldChanges.length===1?"":"s"} · ${comparison.byteChanges.length} changed byte offset${comparison.byteChanges.length===1?"":"s"}`,
+    note:$("#annotationNote").value.trim()
+  };
+  const bookmarks=[...(existing.bookmarks||[]),bookmark].slice(-50);
+  const annotation=annotationFromForm({...existing,bookmarks});
+  annotation.bookmarks=bookmarks;
+  worker.postMessage({type:"annotationSave",annotation});
+  $("#bookmarkChange").textContent="Bookmarked ✓";
+  setTimeout(()=>$("#bookmarkChange").textContent="Bookmark latest change",1500);
 };
 $("#scanWifiNow").onclick=event=>{
   event.currentTarget.disabled=true;
@@ -1082,6 +1420,29 @@ $("#evidenceFile").onchange=async event=>{
   try{await importAndVerify(file);}
   catch(error){$("#exportStatus").textContent=`Verification failed: ${error.message||error}`;}
   event.target.value="";
+};
+$("#importOui").onclick=()=>$("#ouiFile").click();
+$("#ouiFile").onchange=async event=>{
+  const file=event.target.files[0];if(!file)return;
+  $("#vendorStatus").textContent=`Importing ${file.name}…`;
+  try{
+    const count=await importOuiDatabase(file);
+    $("#vendorStatus").textContent=`Imported ${count.toLocaleString()} rows · ${ouiVendors.size.toLocaleString()} unique WiFi OUIs available`;
+  }catch(error){
+    $("#vendorStatus").textContent=`OUI import failed: ${error.message||error}`;
+  }
+  event.target.value="";
+};
+$("#clearOui").onclick=async()=>{
+  if(!confirm("Remove the imported WiFi OUI database from this browser?"))return;
+  if(vendorDb){vendorDb.close();vendorDb=null;}
+  await new Promise((resolve,reject)=>{
+    const request=indexedDB.deleteDatabase("RyancitoSentinalVendors");
+    request.onsuccess=resolve;request.onerror=()=>reject(request.error);
+    request.onblocked=()=>reject(new Error("Close other dashboard tabs and try again"));
+  });
+  ouiVendors.clear();
+  await loadVendorDatabase();
 };
 
 function printReport(){
@@ -1153,3 +1514,6 @@ updatePrintOrientation();
 applySettings();
 refreshStorage();
 setInterval(refreshStorage,30000);
+loadVendorDatabase().catch(error=>{
+  $("#vendorStatus").textContent=`Manufacturer database unavailable: ${error.message||error}`;
+});

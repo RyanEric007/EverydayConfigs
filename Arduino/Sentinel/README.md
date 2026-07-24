@@ -93,6 +93,18 @@ Flag bits:
   from observed data.
 - Explainable insights report measurable changes without claiming malicious
   intent.
+- Common BLE company identifiers are resolved in the browser using a compact
+  Bluetooth SIG-derived table.
+- IEEE MA-L or simple OUI/vendor CSV files can be imported into browser
+  IndexedDB for persistent WiFi interface-vendor lookup.
+- Manufacturer results remain derived data and never claim a device model,
+  owner, identity, or trustworthiness.
+- BLE detail cards compare the latest pair of distinct advertisements at
+  decoded-field and raw-byte-offset level.
+- Detail analysis includes distinct-payload counts, RSSI summary statistics,
+  and observation-gap timelines over the retained 100-record history.
+- Analysts can bookmark a specific advertisement change; bookmarks are stored
+  with annotations and included in evidence exports.
 - Browser storage usage and optional session retention are visible in
   Settings.
 

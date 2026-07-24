@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>RyancitoSentinal</title>
-  <link rel="stylesheet" href="/style.css?v=4.4">
+  <link rel="stylesheet" href="/style.css?v=4.6">
 </head>
 <body>
   <header>
@@ -64,7 +64,7 @@
           <table>
             <thead><tr>
               <th data-wifi-sort="ssid">SSID</th><th data-wifi-sort="rssi">RSSI</th><th>Signal</th><th>Trend</th>
-              <th data-wifi-sort="channel">Channel</th><th data-wifi-sort="security">Security</th><th data-wifi-sort="bssid">BSSID</th>
+              <th data-wifi-sort="channel">Channel</th><th data-wifi-sort="security">Security</th><th data-wifi-sort="bssid">BSSID</th><th>Vendor</th>
             </tr></thead>
             <tbody id="wifiRows"></tbody>
           </table>
@@ -155,6 +155,14 @@
         <option value="50">Keep newest 50</option>
       </select>
     </label>
+    <h3>Manufacturer lookup</h3>
+    <p class="evidence-note">Common BLE company IDs are built in. Import an IEEE MA-L CSV or a simple <code>OUI,Vendor</code> CSV for broader WiFi vendor lookup. The database stays in this browser.</p>
+    <div class="evidence-actions">
+      <button id="importOui">Import OUI database</button>
+      <button id="clearOui">Clear OUI database</button>
+      <input id="ouiFile" type="file" accept=".csv,text/csv,.txt,text/plain" hidden>
+    </div>
+    <div id="vendorStatus" class="export-status">Loading manufacturer database…</div>
     <h3>Evidence</h3>
     <label>Case ID <input id="caseId" maxlength="80" placeholder="Optional"></label>
     <label>Investigator <input id="investigator" maxlength="80" placeholder="Optional"></label>
@@ -201,11 +209,15 @@
       </details>
       <details>
         <summary>Insights and annotations</summary>
-        <p>Insights report explainable facts such as a new identifier, strong signal, changed advertisement, open WiFi, duplicate SSID, or changed channel/security. Tap an insight to open the related device card. They never declare a device malicious. Detail-card annotations are analyst-supplied and remain separate from observations.</p>
+        <p>Insights report explainable facts such as a new identifier, strong signal, changed advertisement, open WiFi, duplicate SSID, or changed channel/security. Tap an insight to open the related device card. BLE detail cards compare distinct payloads at field and byte level, summarize RSSI, show presence gaps, and let you bookmark the latest change. Derived analysis never changes raw evidence or declares a device malicious.</p>
+      </details>
+      <details>
+        <summary>Manufacturer and OUI lookup</summary>
+        <p>RyancitoSentinal includes common BLE company identifiers. For broader WiFi vendor lookup, download the official <a href="https://standards-oui.ieee.org/oui/oui.csv" target="_blank" rel="noopener">IEEE MA-L OUI database (CSV)</a>, save it to your device, then use <strong>Import OUI database</strong> under Manufacturer Lookup. On iPhone, open the link while internet is available, use Share → Save to Files, and select <code>oui.csv</code> when importing. The fallback Sentinal access point may not provide internet access. The database stays in this browser. OUI results usually identify the network-interface vendor—not necessarily the finished product or its owner—and randomized or locally administered addresses may not resolve.</p>
       </details>
       <details>
         <summary>WiFi and BLE limitations</summary>
-        <p>WiFi security is the access point's advertised mode, not proof that it is trustworthy. Randomized BLE addresses may rotate. A sighting does not prove a person's identity or continued presence.</p>
+        <p>WiFi security is the access point's advertised mode, not proof that it is trustworthy. Manufacturer results are derived: a BLE company ID identifies its registered company, while an OUI usually identifies a network-interface vendor—not necessarily the finished product or its owner. Randomized and locally administered addresses may not support vendor lookup. A sighting does not prove a person's identity or continued presence.</p>
       </details>
       <details>
         <summary>Evidence handling</summary>
@@ -227,6 +239,13 @@
     <h3>Raw advertisement data</h3>
     <pre id="detailRaw" class="raw-data">Unavailable</pre>
     <div id="decodedFields" class="decoded-fields"></div>
+    <h3>Forensic analysis</h3>
+    <div id="forensicStats" class="forensic-stats"></div>
+    <div id="advertisementDiff" class="forensic-panel">Loading comparison…</div>
+    <div id="payloadHistory" class="forensic-panel"></div>
+    <div id="presenceTimeline" class="forensic-panel"></div>
+    <div id="bookmarkList" class="forensic-panel"></div>
+    <button id="bookmarkChange" disabled>Bookmark latest change</button>
     <h3>Recent evidence</h3>
     <div id="detailChart" class="detail-chart"></div>
     <div id="detailHistory" class="detail-history">Loading…</div>
@@ -268,6 +287,6 @@
     <div id="sessionAnalysis" class="session-analysis"></div>
   </section>
 
-  <script src="/app.js?v=4.4"></script>
+  <script src="/app.js?v=4.6"></script>
 </body>
 </html>
