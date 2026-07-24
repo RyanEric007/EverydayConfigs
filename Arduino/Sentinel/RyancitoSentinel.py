@@ -12,12 +12,14 @@ import struct
 import sys
 import time
 import ubinascii
+import ujson
+import os
 
 # ========================== CONFIGURATION ==========================
 try:
     import secret
-    HOME_SSID = getattr(secret, "HOME_SSID", "CHANGE_ME")
-    HOME_PASSWORD = getattr(secret, "HOME_PASSWORD", "CHANGE_ME")
+    HOME_SSID = getattr(secret, "HOME_SSID", "")
+    HOME_PASSWORD = getattr(secret, "HOME_PASSWORD", "")
     IPHONE_SSID = getattr(secret, "IPHONE_SSID", "")
     IPHONE_PASSWORD = getattr(secret, "IPHONE_PASSWORD", "")
     AP_SSID = getattr(secret, "AP_SSID", "RyancitoSentinal")
@@ -32,6 +34,7 @@ except ImportError:
 
 HTTP_PORT = 80
 CONNECT_TIMEOUT_MS = 12_000
+CONNECT_ATTEMPTS = 2
 CLIENT_TIMEOUT_SECONDS = 5
 AP_CHANNEL = 6
 
@@ -41,6 +44,12 @@ SCAN_WINDOW_US = 30_000
 ACTIVE_SCAN = True
 MAX_DEVICES = 80
 MAX_NETWORKS = 64
+STATE_FILE = "sentinal_state.json"
+STATE_TEMP_FILE = "sentinal_state.tmp"
+AUTO_SAVE_MINUTES = 5
+MAX_SAVED_SCANS = 10
+MAX_SAVED_PER_RADIO = 25
+CONFIG_FILE = "sentinal_config.json"
 
 # Approximate BLE proximity thresholds. RSSI is affected by walls, antennas,
 # pockets, orientation, and interference, so these are zones—not measurements.
@@ -54,6 +63,42 @@ RGB_RED_PIN = 46
 RGB_GREEN_PIN = 0
 RGB_BLUE_PIN = 45
 # =================================================================
+
+
+def load_runtime_config():
+    global SCAN_SECONDS, MAX_DEVICES, MAX_NETWORKS
+    global RSSI_15_FEET, RSSI_10_FEET, RSSI_5_FEET, RSSI_NEXT_TO
+    global AUTO_SAVE_MINUTES, MAX_SAVED_SCANS, MAX_SAVED_PER_RADIO
+    try:
+        with open(CONFIG_FILE, "r") as config_file:
+            config = ujson.load(config_file)
+    except OSError:
+        print("Using built-in settings; {} was not found.".format(CONFIG_FILE))
+        return
+    except Exception as e:
+        print("Could not read {}: {}".format(CONFIG_FILE, e))
+        return
+
+    SCAN_SECONDS = max(2, min(30, int(
+        config.get("scan_seconds", SCAN_SECONDS))))
+    MAX_DEVICES = max(10, min(120, int(
+        config.get("max_devices", MAX_DEVICES))))
+    MAX_NETWORKS = max(10, min(100, int(
+        config.get("max_networks", MAX_NETWORKS))))
+    RSSI_15_FEET = int(config.get("rssi_15_feet", RSSI_15_FEET))
+    RSSI_10_FEET = int(config.get("rssi_10_feet", RSSI_10_FEET))
+    RSSI_5_FEET = int(config.get("rssi_5_feet", RSSI_5_FEET))
+    RSSI_NEXT_TO = int(config.get("rssi_next_to", RSSI_NEXT_TO))
+    AUTO_SAVE_MINUTES = max(1, min(60, int(
+        config.get("auto_save_minutes", AUTO_SAVE_MINUTES))))
+    MAX_SAVED_SCANS = max(1, min(30, int(
+        config.get("max_saved_scans", MAX_SAVED_SCANS))))
+    MAX_SAVED_PER_RADIO = max(5, min(50, int(
+        config.get("max_saved_per_radio", MAX_SAVED_PER_RADIO))))
+    print("Loaded runtime settings from", CONFIG_FILE)
+
+
+load_runtime_config()
 
 BOOT_MS = time.ticks_ms()
 
@@ -72,6 +117,10 @@ scan_done = False
 strongest_rssi = -127
 previous_ble_rssi = {}
 previous_wifi_rssi = {}
+latest_ble_results = []
+latest_wifi_results = []
+saved_history = []
+last_state_save_ms = time.ticks_ms()
 
 _IRQ_SCAN_RESULT = const(5)
 _IRQ_SCAN_DONE = const(6)
@@ -147,6 +196,93 @@ SECURITY_MAP = build_security_map()
 def print_exception(label, exception):
     print(label)
     sys.print_exception(exception)
+
+
+def load_saved_history():
+    global saved_history
+    try:
+        with open(STATE_FILE, "r") as state_file:
+            state = ujson.load(state_file)
+        history = state.get("history", [])
+        if isinstance(history, list):
+            saved_history = history[-MAX_SAVED_SCANS:]
+        print("Loaded {} saved scan snapshots.".format(len(saved_history)))
+    except OSError:
+        saved_history = []
+        print("No saved Sentinal history yet.")
+    except Exception as e:
+        saved_history = []
+        print_exception("Could not load saved history:", e)
+
+
+def compact_wifi_results(results):
+    return [[item["ssid"], item["bssid"], item["rssi"],
+             item["channel"], item["security"]]
+            for item in results[:MAX_SAVED_PER_RADIO]]
+
+
+def compact_ble_results(results):
+    return [[item["name"], item["mac"], item["best_rssi"],
+             item["manufacturer"], item["services"]]
+            for item in results[:MAX_SAVED_PER_RADIO]]
+
+
+def save_state(reason="manual"):
+    global saved_history, last_state_save_ms
+    snapshot = {
+        "saved_at": time.time(),
+        "uptime_seconds": time.ticks_diff(
+            time.ticks_ms(), BOOT_MS) // 1000,
+        "reason": reason,
+        "connected_ssid": connected_ssid,
+        "wifi": compact_wifi_results(latest_wifi_results),
+        "ble": compact_ble_results(latest_ble_results),
+    }
+    saved_history.append(snapshot)
+    saved_history = saved_history[-MAX_SAVED_SCANS:]
+    state = {
+        "version": 1,
+        "history": saved_history,
+    }
+
+    try:
+        with open(STATE_TEMP_FILE, "w") as state_file:
+            ujson.dump(state, state_file)
+            state_file.flush()
+        try:
+            os.remove(STATE_FILE)
+        except OSError:
+            pass
+        os.rename(STATE_TEMP_FILE, STATE_FILE)
+        last_state_save_ms = time.ticks_ms()
+        print("Saved Sentinal state:", len(saved_history), "snapshots")
+        return True, None
+    except Exception as e:
+        print_exception("Could not save Sentinal state:", e)
+        try:
+            os.remove(STATE_TEMP_FILE)
+        except OSError:
+            pass
+        return False, str(e)
+
+
+def auto_save_if_due():
+    if AUTO_SAVE_MINUTES <= 0:
+        return
+    elapsed = time.ticks_diff(time.ticks_ms(), last_state_save_ms)
+    if elapsed >= AUTO_SAVE_MINUTES * 60 * 1000:
+        save_state("automatic")
+
+
+def clear_saved_history():
+    global saved_history
+    saved_history = []
+    for filename in (STATE_FILE, STATE_TEMP_FILE):
+        try:
+            os.remove(filename)
+        except OSError:
+            pass
+    print("Cleared saved Sentinal history.")
 
 
 def clamp_8bit(value):
@@ -375,6 +511,7 @@ def ble_irq(event, data):
 
 def scan_devices():
     global devices, scan_done, strongest_rssi, previous_ble_rssi
+    global latest_ble_results
     devices = {}
     scan_done = False
     strongest_rssi = -127
@@ -417,6 +554,7 @@ def scan_devices():
             item["trend_style"] = style
             current_rssi[item["mac"]] = item["best_rssi"]
         previous_ble_rssi = current_rssi
+        latest_ble_results = result[:MAX_DEVICES]
         print("Found {} BLE devices.".format(len(result)))
         if result:
             zone = set_proximity_led(result[0]["best_rssi"])
@@ -433,7 +571,7 @@ def scan_devices():
 
 
 def scan_wifi_networks():
-    global previous_wifi_rssi
+    global previous_wifi_rssi, latest_wifi_results
     print("Scanning for Wi-Fi networks...")
     gc.collect()
     try:
@@ -480,6 +618,7 @@ def scan_wifi_networks():
         item["trend_style"] = style
         current_rssi[item["bssid"]] = item["rssi"]
     previous_wifi_rssi = current_rssi
+    latest_wifi_results = found[:MAX_NETWORKS]
     print("Found {} Wi-Fi networks.".format(len(found)))
     return found[:MAX_NETWORKS], None
 
@@ -533,38 +672,50 @@ def connect_to_wifi(ssid, password, label):
     if not ssid or ssid == "CHANGE_ME":
         return False
 
-    print("Connecting to {}: {}".format(label, ssid))
-    set_rgb(0, 0, 80)
-    sta.active(True)
-    try:
-        sta.config(reconnects=3)
-    except Exception:
-        pass
-
-    try:
-        sta.connect(ssid, password)
-    except Exception as e:
-        print_exception("{} connection failed:".format(label), e)
-        led_off()
-        return False
-
-    deadline = time.ticks_add(time.ticks_ms(), CONNECT_TIMEOUT_MS)
-    blink = False
-    while not sta.isconnected() and time.ticks_diff(
-            deadline, time.ticks_ms()) > 0:
-        blink = not blink
-        orange.value(1 if blink else 0)
+    for attempt in range(1, CONNECT_ATTEMPTS + 1):
+        print("Connecting to {}: {} (attempt {}/{})".format(
+            label, ssid, attempt, CONNECT_ATTEMPTS))
+        set_rgb(0, 0, 80)
+        sta.active(True)
+        try:
+            sta.config(reconnects=1)
+        except Exception:
+            pass
+        try:
+            sta.disconnect()
+        except Exception:
+            pass
         time.sleep_ms(200)
 
-    orange_off()
-    led_off()
-    if sta.isconnected():
-        connected_ssid = ssid
-        print("Connected to {}: {}".format(label, sta.ifconfig()[0]))
-        orange_on()
-        return True
+        try:
+            sta.connect(ssid, password)
+        except Exception as e:
+            print_exception("{} connection failed:".format(label), e)
+            continue
 
-    print("Could not connect to {}.".format(label))
+        deadline = time.ticks_add(time.ticks_ms(), CONNECT_TIMEOUT_MS)
+        blink = False
+        while not sta.isconnected() and time.ticks_diff(
+                deadline, time.ticks_ms()) > 0:
+            blink = not blink
+            orange.value(1 if blink else 0)
+            time.sleep_ms(200)
+
+        orange_off()
+        led_off()
+        if sta.isconnected():
+            connected_ssid = ssid
+            print("Connected to {}: {}".format(label, sta.ifconfig()[0]))
+            orange_on()
+            return True
+
+        try:
+            status = sta.status()
+        except Exception:
+            status = "unavailable"
+        print("Could not connect to {}. WLAN status: {}".format(
+            label, status))
+
     try:
         sta.disconnect()
     except Exception:
@@ -590,6 +741,13 @@ def configure_wifi():
         network.hostname("RyancitoSentinal")
     except Exception:
         pass
+
+    print("")
+    print("Wi-Fi connection priority:")
+    print("  1. iPhone:", IPHONE_SSID or "(not configured)")
+    print("  2. Home:", HOME_SSID or "(not configured)")
+    print("  3. Fallback AP:", AP_SSID)
+    print("")
 
     if connect_to_wifi(IPHONE_SSID, IPHONE_PASSWORD, "iPhone hotspot"):
         in_ap_mode = False
@@ -732,7 +890,8 @@ def build_html(found, wifi_networks, scan_error=None, wifi_error=None):
 <style>
 body{{background:#05070c;color:#00fff7;font-family:monospace;margin:0}}
 .header{{text-align:center;padding:16px;border-bottom:1px solid rgba(0,255,247,.2);font-size:1.35em;font-weight:bold;text-shadow:0 0 10px #00fff7}}
-.settings-open{{position:absolute;right:12px;top:10px;color:#00fff7;background:#0a0e16;border:1px solid #00fff7;border-radius:9px;padding:7px 11px;font:inherit;cursor:pointer}}
+.settings-open{{position:fixed;right:max(12px,env(safe-area-inset-right));top:max(10px,env(safe-area-inset-top));z-index:25;color:#00fff7;background:#0a0e16;border:1px solid #00fff7;border-radius:999px;padding:9px 13px;font:inherit;cursor:pointer;box-shadow:0 0 14px rgba(0,255,247,.22)}}
+.settings-visible .settings-open{{display:none}}
 .container{{max-width:1100px;margin:0 auto;padding:16px 12px 40px}}
 .card{{background:#0a0e16;border:1px solid rgba(0,255,247,.3);border-radius:12px;padding:16px;margin-bottom:16px}}
 h2{{color:#b967ff;font-size:1.1em;margin:0 0 14px}}
@@ -795,7 +954,13 @@ th{{color:#b967ff;background:rgba(185,103,255,.1)}}
 .btn-row{{text-align:center;margin-top:10px}}
 .btn{{display:inline-block;text-decoration:none;color:#00fff7;border:2px solid #00fff7;padding:10px 22px;border-radius:8px;margin:5px;background:transparent;font-family:inherit;font-size:1em;cursor:pointer}}
 .footer{{text-align:center;padding:14px;font-size:.8em;opacity:.45}}
-@media(max-width:650px){{.status-grid{{grid-template-columns:1fr}}}}
+@media(max-width:650px){{
+.status-grid{{grid-template-columns:1fr}}
+.header{{padding:18px 58px 14px 10px;font-size:1.05em}}
+.settings-open{{width:44px;height:44px;padding:0;font-size:0}}
+.settings-open .gear{{font-size:22px}}
+.container{{padding-top:10px}}
+}}
 @page{{size:landscape;margin:.35in}}
 @media print{{
 *{{text-shadow:none!important;box-shadow:none!important}}
@@ -834,7 +999,7 @@ th,td{{color:black!important;border-bottom:1px solid black!important;padding:3px
 </head>
 <body>
 <div class="header">RyancitoSentinal — Wi-Fi + BLE Survey
-<button class="settings-open" id="settings-open" type="button" aria-label="Open settings">⚙ Settings</button>
+<button class="settings-open" id="settings-open" type="button" aria-label="Open settings"><span class="gear">⚙</span><span class="settings-word"> Settings</span></button>
 </div>
 <div class="container">
 {error_html}
@@ -966,6 +1131,9 @@ th,td{{color:black!important;border-bottom:1px solid black!important;padding:3px
     <input class="toggle" id="setting-recording" type="checkbox">
   </label>
   <div class="settings-actions">
+    <button class="settings-action" id="save-nano" type="button">Save to Nano</button>
+    <button class="settings-action" id="export-nano" type="button">Nano history</button>
+    <button class="settings-action" id="clear-nano" type="button">Clear Nano</button>
     <button class="settings-action" id="export-json" type="button">Export JSON</button>
     <button class="settings-action" id="export-csv" type="button">Export CSV</button>
     <button class="settings-action" id="clear-session" type="button">Clear session</button>
@@ -1034,8 +1202,15 @@ th,td{{color:black!important;border-bottom:1px solid black!important;padding:3px
     document.getElementById("countdown").textContent = remaining;
     timer = setInterval(function(){{
       remaining -= 1;
+      if (remaining <= 0) {{
+        clearInterval(timer);
+        timer = null;
+        document.getElementById("scan-status").innerHTML =
+          "<strong>Scanning…</strong>";
+        window.location.reload();
+        return;
+      }}
       document.getElementById("countdown").textContent = remaining;
-      if (remaining <= 0) window.location.reload();
     }}, 1000);
   }}
 
@@ -1188,6 +1363,40 @@ th,td{{color:black!important;border-bottom:1px solid black!important;padding:3px
     downloadFile("RyancitoSentinal-session.json", "application/json",
                  JSON.stringify(loadSession(), null, 2));
   }});
+  document.getElementById("save-nano").addEventListener("click", function(){{
+    var button = this;
+    button.textContent = "Saving…";
+    fetch("/save", {{cache:"no-store"}}).then(function(response){{
+      if (!response.ok) throw new Error("Save failed");
+      return response.text();
+    }}).then(function(){{
+      button.textContent = "Saved ✓";
+      setTimeout(function(){{ button.textContent = "Save to Nano"; }}, 1800);
+    }}).catch(function(){{
+      button.textContent = "Save failed";
+      setTimeout(function(){{ button.textContent = "Save to Nano"; }}, 2200);
+    }});
+  }});
+  document.getElementById("export-nano").addEventListener("click", function(){{
+    fetch("/history.json", {{cache:"no-store"}})
+      .then(function(response){{ return response.text(); }})
+      .then(function(content){{
+        downloadFile("RyancitoSentinal-nano-history.json",
+                     "application/json", content);
+      }});
+  }});
+  document.getElementById("clear-nano").addEventListener("click", function(){{
+    if (!confirm("Permanently clear all history saved on the Nano?")) return;
+    var button = this;
+    button.textContent = "Clearing…";
+    fetch("/clear-history", {{cache:"no-store"}}).then(function(response){{
+      if (!response.ok) throw new Error("Clear failed");
+      button.textContent = "Cleared ✓";
+      setTimeout(function(){{ button.textContent = "Clear Nano"; }}, 1800);
+    }}).catch(function(){{
+      button.textContent = "Clear failed";
+    }});
+  }});
   document.getElementById("export-csv").addEventListener("click", function(){{
     var lines = ["timestamp,radio,id,name,rssi,trend"];
     loadSession().forEach(function(snapshot){{
@@ -1243,6 +1452,8 @@ def send_response(client, status, content_type, body):
         body = body.encode("utf-8")
     headers = (
         "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\n"
+        "Cache-Control: no-store, no-cache, must-revalidate\r\n"
+        "Pragma: no-cache\r\nExpires: 0\r\n"
         "Connection: close\r\n\r\n"
     ).format(status, content_type, len(body))
     client.sendall(headers.encode())
@@ -1288,6 +1499,29 @@ def handle_client(client, addr):
     if path == "/favicon.ico":
         send_response(client, "204 No Content", "image/x-icon", b"")
         return
+    if path == "/save":
+        saved, error = save_state("manual")
+        if saved:
+            send_response(client, "200 OK", "application/json",
+                          '{"saved":true}\n')
+        else:
+            send_response(client, "500 Internal Server Error",
+                          "application/json",
+                          '{"saved":false,"error":"%s"}\n' %
+                          html_escape(error))
+        return
+    if path == "/history.json":
+        send_response(client, "200 OK", "application/json",
+                      ujson.dumps({
+                          "version": 1,
+                          "history": saved_history,
+                      }))
+        return
+    if path == "/clear-history":
+        clear_saved_history()
+        send_response(client, "200 OK", "application/json",
+                      '{"cleared":true}\n')
+        return
     if path != "/":
         send_response(client, "404 Not Found", "text/plain", "Not found\n")
         return
@@ -1295,6 +1529,7 @@ def handle_client(client, addr):
     print("GET / from", addr)
     wifi_networks, wifi_error = scan_wifi_networks()
     found, error = scan_devices()
+    auto_save_if_due()
     send_response(
         client,
         "200 OK",
@@ -1362,6 +1597,7 @@ def main():
     led_off()
     ble.active(True)
     ble.irq(ble_irq)
+    load_saved_history()
     configure_wifi()
     serve_forever()
 
