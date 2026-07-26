@@ -32,7 +32,7 @@ except ImportError:
 
 WEB_PORT = 80
 POLL_MS = 250
-BUILD_VERSION = "2026.07.25-r6-browser-intelligence"
+BUILD_VERSION = "2026.07.25-r8-caret-panels"
 
 UART_BAUD = 256000
 # Physical Nano header D9 = ESP32 GPIO18; header D10 = ESP32 GPIO21.
@@ -85,6 +85,12 @@ border-bottom:1px solid #2a6267}.top h1{margin:0;font-size:clamp(1.25rem,4vw,1.8
 text-shadow:0 0 12px #63f5f099}.wrap{width:min(1220px,100%);margin:auto;padding:16px}
 .panel{background:var(--panel);border:1px solid #2a6267;border-radius:16px;padding:18px;
 margin-bottom:16px}.title{margin:0 0 15px;color:var(--purple);font-size:1.1rem}
+.panel>.title{position:relative;padding-right:30px;cursor:pointer;user-select:none}
+.panel>.title:after{content:"⌃";position:absolute;right:3px;top:-5px;color:var(--cyan);
+font-size:1.55rem;line-height:1}.panel.collapsed>.title{margin-bottom:0}
+.panel.collapsed>.title:after{content:"⌄";top:-8px}
+.panel.collapsed>:not(.title){display:none}.panel>.title:focus{outline:1px dashed var(--cyan);
+outline-offset:6px}
 .status-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px 28px}
 .label{color:var(--purple);font-size:.78rem;font-weight:bold;margin-bottom:4px}
 .value{overflow-wrap:anywhere}.dot:before{content:"";display:inline-block;width:9px;height:9px;
@@ -164,7 +170,7 @@ flex-wrap:wrap;gap:8px}.notice{color:var(--warn);font-size:.75rem;margin-top:10p
 text-shadow:none!important}.top{text-align:left}.wrap{width:100%;padding:8px}.panel{border:1px solid #000;
 break-inside:avoid}.gate-tools,.settings,.sweep,.echo,.offline{display:none!important}.scope,.meter,.gate,.box{
 border-color:#000}.fill,.blip:after{background:#000!important}.gates{grid-template-columns:repeat(3,1fr)}
-.footer{display:none}}
+.panel.collapsed>:not(.title){display:revert!important}.panel>.title:after{display:none}.footer{display:none}}
 </style>
 </head>
 <body>
@@ -212,7 +218,6 @@ border-color:#000}.fill,.blip:after{background:#000!important}.gates{grid-templa
  <div id="gates" class="gates"></div>
 </section>
 <section class="panel">
- <h2 class="title">Last 60 Seconds</h2>
  <h2 class="title">Detection History</h2>
  <div class="charts">
   <div><div class="label">Target distance and state</div><canvas id="history" width="720" height="210"></canvas></div>
@@ -275,6 +280,17 @@ border-color:#000}.fill,.blip:after{background:#000!important}.gates{grid-templa
 <script>
 "use strict";
 const $=id=>document.getElementById(id);
+const collapsedPanels=JSON.parse(localStorage.getItem("ryancitoCollapsedPanels")||"{}");
+document.querySelectorAll(".panel>.title").forEach(title=>{
+ const panel=title.parentElement,key=title.textContent.trim();
+ title.tabIndex=0;title.setAttribute("role","button");title.setAttribute("aria-expanded","true");
+ if(collapsedPanels[key]){panel.classList.add("collapsed");title.setAttribute("aria-expanded","false")}
+ const toggle=()=>{panel.classList.toggle("collapsed");const closed=panel.classList.contains("collapsed");
+  title.setAttribute("aria-expanded",String(!closed));collapsedPanels[key]=closed;
+  localStorage.setItem("ryancitoCollapsedPanels",JSON.stringify(collapsedPanels))};
+ title.addEventListener("click",toggle);title.addEventListener("keydown",event=>{
+  if(event.key==="Enter"||event.key===" "){event.preventDefault();toggle()}});
+});
 let showMove=true,showStill=true,busy=false,failures=0,smoothedDistance=0,lastEcho=0;
 let lastFrameCount=0,lastFrameTime=performance.now();
 const samples=[],prefs=JSON.parse(localStorage.getItem("ryancitoRadarPrefs")||"{}");
