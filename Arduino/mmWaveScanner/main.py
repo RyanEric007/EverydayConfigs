@@ -32,7 +32,7 @@ except ImportError:
 
 WEB_PORT = 80
 POLL_MS = 250
-BUILD_VERSION = "2026.07.25-r4-gate-copy"
+BUILD_VERSION = "2026.07.25-r5-sentinel-ui"
 
 UART_BAUD = 256000
 # Physical Nano header D9 = ESP32 GPIO18; header D10 = ESP32 GPIO21.
@@ -107,6 +107,9 @@ to{transform:rotate(360deg)}}.blip{position:absolute;left:50%;bottom:0;width:18p
 border:2px solid currentColor;border-radius:50%;transform:translate(-50%,50%);
 box-shadow:0 0 14px currentColor;transition:bottom .18s ease,color .18s,opacity .18s}
 .blip:after{content:"";position:absolute;inset:3px;border-radius:50%;background:currentColor}
+.echo{position:absolute;left:50%;bottom:0;width:12px;height:12px;border:1px solid currentColor;
+border-radius:50%;transform:translate(-50%,50%);pointer-events:none;animation:echoFade 4s linear forwards}
+@keyframes echoFade{from{opacity:.65;box-shadow:0 0 9px currentColor}to{opacity:0;transform:translate(-50%,50%) scale(2.4)}}
 .scope-label{position:absolute;color:var(--muted);font-size:.67rem;bottom:3px}
 .l0{left:2%}.l5{left:25%}.l10{left:49%}.l15{right:24%}.l20{right:2%}
 .big{font-size:clamp(2.6rem,7vw,4.8rem);font-weight:bold;line-height:1;
@@ -130,14 +133,27 @@ box-shadow:0 0 7px #63f5f099}.still-fill{background:var(--purple);
 box-shadow:0 0 7px #c36dff88}.offline{display:none;margin:0 0 16px;padding:10px;
 border:1px solid var(--danger);color:var(--danger);text-align:center}.footer{text-align:center;
 color:var(--muted);font-size:.72rem}.hide-move .move-row,.hide-still .still-row{display:none}
+.charts{display:grid;grid-template-columns:1.4fr 1fr;gap:16px}canvas{display:block;width:100%;
+height:210px;border:1px solid var(--line);background:#071014}.heatmap{display:grid;
+grid-template-columns:repeat(9,1fr);gap:4px;height:210px}.heat-cell{position:relative;min-width:0;
+border:1px solid var(--line);background:#071014;overflow:hidden}.heat-m,.heat-s{position:absolute;
+left:0;right:0;bottom:0;height:0;transition:height .18s}.heat-m{background:#63f5f0bb}
+.heat-s{background:#c36dffaa;mix-blend-mode:screen}.heat-label{position:absolute;z-index:2;
+left:0;right:0;bottom:5px;text-align:center;font-size:.65rem;color:#fff}.diagnostics{display:grid;
+grid-template-columns:repeat(6,1fr);gap:10px}.diag{padding:10px;border:1px solid var(--line);
+background:var(--panel2)}.diag-value{font-size:1.05rem;font-weight:bold;margin-top:4px}
+.settings{display:flex;flex-wrap:wrap;gap:12px;align-items:end;margin-top:14px}.settings label{
+color:var(--purple);font-size:.75rem}.settings select{display:block;margin-top:4px;color:var(--cyan);
+background:#071014;border:1px solid #2a6267;padding:7px;font:inherit}
 @media(max-width:760px){.wrap{padding:10px}.panel{padding:14px;border-radius:12px}
 .status-grid{grid-template-columns:repeat(2,1fr)}.radar-layout{grid-template-columns:1fr}
-.gates{grid-template-columns:repeat(2,1fr)}}@media(max-width:460px){
+.gates{grid-template-columns:repeat(2,1fr)}.charts{grid-template-columns:1fr}
+.diagnostics{grid-template-columns:repeat(3,1fr)}}@media(max-width:460px){
 .status-grid,.gates{grid-template-columns:1fr}.top{padding:14px}.big{font-size:3.2rem}}
 @media(prefers-reduced-motion:reduce){.sweep{animation:none}.blip,.fill{transition:none}}
 @media print{*{color:#000!important;background:#fff!important;box-shadow:none!important;
 text-shadow:none!important}.top{text-align:left}.wrap{width:100%;padding:8px}.panel{border:1px solid #000;
-break-inside:avoid}.gate-tools,.sweep,.offline{display:none!important}.scope,.meter,.gate,.box{
+break-inside:avoid}.gate-tools,.settings,.sweep,.echo,.offline{display:none!important}.scope,.meter,.gate,.box{
 border-color:#000}.fill,.blip:after{background:#000!important}.gates{grid-template-columns:repeat(3,1fr)}
 .footer{display:none}}
 </style>
@@ -186,13 +202,40 @@ border-color:#000}.fill,.blip:after{background:#000!important}.gates{grid-templa
  <div id="gateFilter" class="gate-filter" aria-label="Individual gate visibility"></div>
  <div id="gates" class="gates"></div>
 </section>
+<section class="panel">
+ <h2 class="title">Last 60 Seconds</h2>
+ <div class="charts">
+  <div><div class="label">Target distance and state</div><canvas id="history" width="720" height="210"></canvas></div>
+  <div><div class="label">Live energy heatmap · Gate 0–8</div><div id="heatmap" class="heatmap"></div></div>
+ </div>
+</section>
+<section class="panel">
+ <h2 class="title">System Health</h2>
+ <div class="diagnostics">
+  <div class="diag"><div class="label">Frames</div><div id="frames" class="diag-value">0</div></div>
+  <div class="diag"><div class="label">Frame rate</div><div id="fps" class="diag-value">0/s</div></div>
+  <div class="diag"><div class="label">Parse errors</div><div id="errors" class="diag-value">0</div></div>
+  <div class="diag"><div class="label">Wi-Fi RSSI</div><div id="rssi" class="diag-value">-</div></div>
+  <div class="diag"><div class="label">API latency</div><div id="latency" class="diag-value">-</div></div>
+  <div class="diag"><div class="label">Free memory</div><div id="memory" class="diag-value">-</div></div>
+ </div>
+ <div class="settings">
+  <label>Smoothing<select id="smoothSetting"><option value="0">Raw</option>
+  <option value=".25">Responsive</option><option value=".12">Smooth</option></select></label>
+  <label>Radar range<select id="rangeSetting"><option value="609.6">20 ft</option>
+  <option value="304.8">10 ft</option><option value="914.4">30 ft</option></select></label>
+  <button onclick="clearHistory()">Clear history</button>
+ </div>
+</section>
 <div class="footer">LD2410 range/presence dashboard · live JSON updates</div>
 </main>
 <script>
 "use strict";
 const $=id=>document.getElementById(id);
-let showMove=true,showStill=true,busy=false,failures=0;
-const gates=$("gates");
+let showMove=true,showStill=true,busy=false,failures=0,smoothedDistance=0,lastEcho=0;
+let lastFrameCount=0,lastFrameTime=performance.now();
+const samples=[],prefs=JSON.parse(localStorage.getItem("ryancitoRadarPrefs")||"{}");
+const gates=$("gates"),heatmap=$("heatmap");
 const gateVisible=Array(9).fill(true),gateFilter=$("gateFilter");
 for(let i=0;i<9;i++){
  const start=(i*.75).toFixed(2),end=((i+1)*.75).toFixed(2);
@@ -201,44 +244,88 @@ for(let i=0;i<9;i++){
  <b>Gate ${i}</b><span>${start}–${end} m</span></div>
  <div class="row move-row"><span>M</span><div class="meter"><div id="m${i}" class="fill move-fill"></div></div><span id="mv${i}">0</span></div>
  <div class="row still-row"><span>S</span><div class="meter"><div id="s${i}" class="fill still-fill"></div></div><span id="sv${i}">0</span></div></div>`);
+ heatmap.insertAdjacentHTML("beforeend",`<div class="heat-cell"><div id="hm${i}" class="heat-m"></div>
+ <div id="hs${i}" class="heat-s"></div><span class="heat-label">G${i}</span></div>`);
 }
+function savePrefs(){localStorage.setItem("ryancitoRadarPrefs",JSON.stringify({
+ showMove,showStill,gateVisible,smoothing:$("smoothSetting").value,range:$("rangeSetting").value}))}
 function toggleKind(kind){
  if(kind==="move"){showMove=!showMove;$("moveToggle").classList.toggle("active",showMove)}
  else{showStill=!showStill;$("stillToggle").classList.toggle("active",showStill)}
  $("gatePanel").classList.toggle("hide-move",!showMove);
  $("gatePanel").classList.toggle("hide-still",!showStill);
+ savePrefs();
 }
 function toggleGate(i){
  gateVisible[i]=!gateVisible[i];
  $("gate"+i).style.display=gateVisible[i]?"":"none";
  $("gbtn"+i).classList.toggle("active",gateVisible[i]);
+ savePrefs();
 }
-function render(d){
+function addEcho(distance,state,range){
+ const now=performance.now();if(!state||now-lastEcho<750)return;lastEcho=now;
+ const e=document.createElement("i");e.className="echo";e.style.bottom=Math.min(100,distance/range*100)+"%";
+ e.style.color=state===2?"var(--purple)":state===3?"var(--warn)":"var(--cyan)";
+ document.querySelector(".scope").appendChild(e);setTimeout(()=>e.remove(),4100);
+}
+function clearHistory(){samples.length=0;drawHistory()}
+function drawHistory(){
+ const c=$("history"),x=c.getContext("2d"),w=c.width,h=c.height,range=+$("rangeSetting").value;
+ x.clearRect(0,0,w,h);x.strokeStyle="#17383d";x.fillStyle="#78aeb1";x.font="10px monospace";
+ for(let i=0;i<=4;i++){const y=8+(h-24)*i/4;x.beginPath();x.moveTo(0,y);x.lineTo(w,y);x.stroke();
+ x.fillText(Math.round(range/30.48*(1-i/4))+"ft",4,y-2)}
+ if(samples.length<2)return;const cutoff=Date.now()-60000;x.beginPath();
+ samples.forEach((p,i)=>{const px=(p.t-cutoff)/60000*w,py=8+(h-24)*(1-Math.min(1,p.d/range));
+ i?x.lineTo(px,py):x.moveTo(px,py)});x.strokeStyle="#63f5f0";x.lineWidth=2;
+ x.shadowColor="#63f5f0";x.shadowBlur=5;x.stroke();x.shadowBlur=0;
+ for(const p of samples){if(!p.s)continue;const px=(p.t-cutoff)/60000*w;
+ const py=8+(h-24)*(1-Math.min(1,p.d/range));x.fillStyle=p.s===2?"#c36dff":p.s===3?"#ffd166":"#63f5f0";
+ x.fillRect(px-1,py-1,3,3)}
+}
+function render(d,latency){
  $("ip").textContent=d.ip;$("ssid").textContent=d.ssid;
  $("status").textContent=d.status;
  $("status").className="dot "+(["idle","moving","still","both"][d.state]||"starting");
- $("inches").textContent=Math.round(d.distance_cm/2.54);
- $("feet").textContent=(d.distance_cm/30.48).toFixed(1);
+ const alpha=+$("smoothSetting").value;
+ smoothedDistance=alpha?(smoothedDistance?smoothedDistance+(d.distance_cm-smoothedDistance)*alpha:d.distance_cm):d.distance_cm;
+ $("inches").textContent=Math.round(smoothedDistance/2.54);
+ $("feet").textContent=(smoothedDistance/30.48).toFixed(1);
  $("me").textContent=d.move_energy;$("se").textContent=d.still_energy;
  $("age").textContent=d.age_ms<1500?"now":(d.age_ms/1000).toFixed(1)+" s ago";
- const blip=$("blip"),pct=Math.min(100,Math.max(0,d.distance_cm/609.6*100));
+ const range=+$("rangeSetting").value,blip=$("blip"),pct=Math.min(100,Math.max(0,smoothedDistance/range*100));
  blip.style.bottom=pct+"%";blip.style.opacity=d.state===0?"0":"1";
  blip.style.color=d.state===2?"var(--purple)":d.state===3?"var(--warn)":"var(--cyan)";
+ addEcho(smoothedDistance,d.state,range);
  for(let i=0;i<9;i++){
   const m=Math.min(100,d.move_gates[i]||0),s=Math.min(100,d.still_gates[i]||0);
   $("m"+i).style.width=m+"%";$("mv"+i).textContent=m;
   $("s"+i).style.width=s+"%";$("sv"+i).textContent=s;
+  $("hm"+i).style.height=(showMove?m:0)+"%";$("hs"+i).style.height=(showStill?s:0)+"%";
  }
+ const now=performance.now(),elapsed=(now-lastFrameTime)/1000;
+ if(elapsed>=1){$("fps").textContent=((d.frames-lastFrameCount)/elapsed).toFixed(1)+"/s";
+ lastFrameCount=d.frames;lastFrameTime=now}
+ $("frames").textContent=d.frames;$("errors").textContent=d.parse_errors;
+ $("rssi").textContent=d.rssi==null?"AP mode":d.rssi+" dBm";$("latency").textContent=Math.round(latency)+" ms";
+ $("memory").textContent=d.mem_free==null?"-":Math.round(d.mem_free/1024)+" KB";
+ samples.push({t:Date.now(),d:smoothedDistance,s:d.state});
+ while(samples.length&&samples[0].t<Date.now()-60000)samples.shift();drawHistory();
 }
 async function update(){
  if(busy||document.hidden)return;busy=true;
  try{
+  const started=performance.now();
   const r=await fetch("/api/status?t="+Date.now(),{cache:"no-store"});
-  if(!r.ok)throw Error(r.status);render(await r.json());failures=0;$("offline").style.display="none";
+  if(!r.ok)throw Error(r.status);render(await r.json(),performance.now()-started);
+  failures=0;$("offline").style.display="none";
  }catch(e){if(++failures>2)$("offline").style.display="block"}
  finally{busy=false}
 }
-update();setInterval(update,__POLL_MS__);
+$("smoothSetting").value=prefs.smoothing||".25";$("rangeSetting").value=prefs.range||"609.6";
+$("smoothSetting").onchange=savePrefs;$("rangeSetting").onchange=()=>{savePrefs();drawHistory()};
+if(prefs.showMove===false)toggleKind("move");if(prefs.showStill===false)toggleKind("still");
+if(Array.isArray(prefs.gateVisible))for(let i=0;i<9;i++)if(prefs.gateVisible[i]===false)toggleGate(i);
+update();setInterval(update,__POLL_MS__);addEventListener("resize",drawHistory);
 </script>
 </body>
 </html>
@@ -449,6 +536,7 @@ def status_json(ip, wlan, active_ssid, network_mode):
         "ssid": active_ssid,
         "network_mode": network_mode,
         "rssi": wlan.status("rssi") if wlan.isconnected() else None,
+        "mem_free": gc.mem_free() if hasattr(gc, "mem_free") else None,
     }
     return json.dumps(data)
 
