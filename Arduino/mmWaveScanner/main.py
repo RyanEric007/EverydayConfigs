@@ -17,15 +17,16 @@ after filling in its Wi-Fi and fallback access-point values.
 
 import gc
 import json
+import machine
 import network
 import socket
 import time
 from machine import Pin, UART
 
 try:
-    import bluetooth
+    import ntptime
 except ImportError:
-    bluetooth = None
+    ntptime = None
 
 try:
     from secret import HOME_SSID, HOME_PASSWORD, AP_SSID, AP_PASSWORD
@@ -35,19 +36,31 @@ except ImportError:
         "secret.py and fill in its Wi-Fi values."
     )
 
+try:
+    from secret import BLE_PIN
+except ImportError:
+    BLE_PIN = None
+
+try:
+    from secret import TELEMETRY_HOST, TELEMETRY_PORT
+except ImportError:
+    TELEMETRY_HOST = None
+    TELEMETRY_PORT = 5514
+
+try:
+    import bluetooth
+except ImportError:
+    bluetooth = None
+
 WEB_PORT = 80
 POLL_MS = 250
-BUILD_VERSION = "2026.07.25-r10-modern-ble"
+BUILD_VERSION = "2026.07.25-r20-journal-caret"
 
 UART_BAUD = 256000
 # Physical Nano header D9 = ESP32 GPIO18; header D10 = ESP32 GPIO21.
 UART_TX_PIN = 18
 UART_RX_PIN = 21
 MAX_UART_BUFFER = 1024
-BLE_SCAN_MS = 5000
-BLE_SCAN_INTERVAL_MS = 30000
-BLE_DEVICE_TTL_MS = 120000
-BLE_MAX_DEVICES = 20
 
 DATA_HEADER = b"\xF4\xF3\xF2\xF1"
 DATA_FOOTER = b"\xF8\xF7\xF6\xF5"
@@ -63,10 +76,6 @@ uart = UART(
 # Use immutable bytes for compatibility with the Arduino Nano ESP32
 # MicroPython port, whose bytearray does not support resizing operations.
 rx_buffer = b""
-ble = None
-ble_devices = {}
-ble_scanning = False
-ble_last_scan = 0
 radar = {
     "state": 0,
     "status": "Starting...",
@@ -79,8 +88,24 @@ radar = {
     "still_gates": [0] * 9,
     "updated_ms": 0,
     "frames": 0,
+    "basic_frames": 0,
+    "engineering_frames": 0,
+    "engineering_updated_ms": 0,
     "parse_errors": 0,
 }
+
+ble = None
+ble_connections = set()
+ble_status_handle = None
+ble_info_handle = None
+ble_command_handle = None
+ble_pending_command = None
+ble_last_frame = -1
+ntp_synced = False
+ntp_last_sync = 0
+sensor_last_recovery = 0
+telemetry_last_state = None
+watchdog = None
 
 
 INDEX_HTML = r"""<!doctype html>
@@ -109,7 +134,11 @@ font-size:1.55rem;line-height:1}.panel.collapsed>.title{margin-bottom:0}
 .panel.collapsed>.title:after{content:"⌄";top:-8px}
 .panel.collapsed>:not(.title){display:none}.panel>.title:focus{outline:1px dashed var(--cyan);
 outline-offset:6px}
-.status-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px 28px}
+.status-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;
+border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel2)}
+.status-item{min-width:0;padding:13px 15px;border-right:1px solid var(--line)}
+.status-item:last-child{border-right:0}.status-sub{margin-top:4px;color:var(--muted);
+font-size:.72rem;overflow-wrap:anywhere}
 .label{color:var(--purple);font-size:.78rem;font-weight:bold;margin-bottom:4px}
 .value{overflow-wrap:anywhere}.dot:before{content:"";display:inline-block;width:9px;height:9px;
 border-radius:50%;background:currentColor;box-shadow:0 0 9px currentColor;margin-right:8px}
@@ -164,8 +193,10 @@ border:1px solid var(--line);background:#071014;overflow:hidden}.heat-m,.heat-s{
 left:0;right:0;bottom:0;height:0;transition:height .18s}.heat-m{background:#63f5f0bb}
 .heat-s{background:#c36dffaa;mix-blend-mode:screen}.heat-label{position:absolute;z-index:2;
 left:0;right:0;bottom:5px;text-align:center;font-size:.65rem;color:#fff}.diagnostics{display:grid;
-grid-template-columns:repeat(6,1fr);gap:10px}.diag{padding:10px;border:1px solid var(--line);
-background:var(--panel2)}.diag-value{font-size:1.05rem;font-weight:bold;margin-top:4px}
+grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:10px}.diag{min-width:0;
+padding:11px 13px;border:1px solid var(--line);border-radius:10px;background:#071014}
+.diag-value{font-size:1rem;font-weight:bold;margin-top:4px}.diag-sub{margin-top:5px;
+color:var(--muted);font-size:.7rem;line-height:1.35}
 .settings{display:flex;flex-wrap:wrap;gap:12px;align-items:end;margin-top:14px}.settings label{
 color:var(--purple);font-size:.75rem}.settings select{display:block;margin-top:4px;color:var(--cyan);
 background:#071014;border:1px solid #2a6267;padding:7px;font:inherit}
@@ -177,51 +208,89 @@ transition:width .2s}.recommendations{display:grid;grid-template-columns:repeat(
 .recommendation{padding:8px 4px;border:1px solid var(--line);text-align:center;font-size:.68rem}
 .recommendation b{display:block;color:var(--purple);margin-bottom:4px}.cal-actions{display:flex;
 flex-wrap:wrap;gap:8px}.notice{color:var(--warn);font-size:.75rem;margin-top:10px}
-.ble-list{display:grid;gap:8px}.ble-device{display:grid;grid-template-columns:minmax(150px,1.4fr)
-minmax(150px,1fr) 90px 90px;gap:12px;align-items:center;padding:11px 12px;border:1px solid var(--line);
-border-radius:10px;background:var(--panel2)}.ble-name{font-weight:700}.ble-address{color:var(--muted);
-font:12px ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere}.signal{height:8px;
-border-radius:8px;background:#071014;overflow:hidden}.signal>i{display:block;height:100%;background:var(--cyan)}
-.ble-note{color:var(--muted);line-height:1.4;margin:0 0 12px}.modal{position:fixed;inset:0;z-index:100;
+.modal{position:fixed;inset:0;z-index:100;
 display:grid;place-items:center;padding:16px;background:#000a;backdrop-filter:blur(8px)}.modal[hidden]{display:none}
-.modal-card{width:min(520px,100%);max-height:90vh;overflow:auto;padding:20px;border:1px solid #2a6267;
+.modal-card{width:min(760px,100%);max-height:90vh;overflow:auto;padding:20px;border:1px solid #2a6267;
 border-radius:18px;background:#090e16;box-shadow:0 25px 80px #000}.modal-head{display:flex;
 align-items:center;justify-content:space-between;margin-bottom:18px}.modal-head h2{margin:0;color:var(--purple)}
 .close{width:38px;height:38px;padding:0;border-radius:50%;font-size:1.25rem}.modal .settings{
 display:grid;grid-template-columns:1fr 1fr;margin:0}.modal .settings select{width:100%}
 .modal-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+.settings-section{margin-top:22px;padding-top:20px;border-top:1px solid var(--line)}
+.settings-section h3{margin:0 0 12px;color:var(--purple)}
+.event-list{display:grid;gap:7px;max-height:360px;overflow-y:auto;overscroll-behavior:contain;
+padding-right:6px;scrollbar-color:#2a6267 #071014;scrollbar-width:thin}
+.event-list::-webkit-scrollbar{width:9px}.event-list::-webkit-scrollbar-track{background:#071014}
+.event-list::-webkit-scrollbar-thumb{background:#2a6267;border:2px solid #071014;border-radius:9px}
+.event-row{display:grid;grid-template-columns:150px 1fr 110px;
+gap:12px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2)}
+.event-time,.event-detail{color:var(--muted);font-size:.8rem}.event-name{font-weight:700}
+.journal{margin-top:16px;border:1px solid var(--line);border-radius:10px;background:#071014}
+.journal summary{position:relative;padding:12px 46px 12px 14px;color:var(--purple);font-weight:700;cursor:pointer;
+list-style:none}.journal summary::-webkit-details-marker{display:none}.journal summary:after{
+content:"⌄";position:absolute;right:15px;top:50%;transform:translateY(-50%);
+color:var(--cyan);font-size:1.2rem;line-height:1}.journal[open] summary:after{content:"⌃"}
+.journal-summary{display:block;margin-top:3px;color:var(--muted);font-size:.72rem;font-weight:400}
+.journal .event-list{margin:0 10px 10px}
+.print-meta{display:none}
 @media(max-width:760px){.wrap{padding:10px}.panel{padding:14px;border-radius:12px}
-.status-grid{grid-template-columns:repeat(2,1fr)}.radar-layout{grid-template-columns:1fr}
+.status-grid{grid-template-columns:repeat(2,1fr)}.status-item:nth-child(2){border-right:0}
+.status-item:nth-child(-n+2){border-bottom:1px solid var(--line)}.radar-layout{grid-template-columns:1fr}
 .gates{grid-template-columns:repeat(2,1fr)}.charts{grid-template-columns:1fr}
-.diagnostics{grid-template-columns:repeat(3,1fr)}.analytics{grid-template-columns:repeat(2,1fr)}
-.cal-grid{grid-template-columns:1fr}.ble-device{grid-template-columns:1fr 1fr}}@media(max-width:460px){
-.status-grid,.gates{grid-template-columns:1fr}.top{padding:14px}.big{font-size:3.2rem}}
-.status-grid,.gates{grid-template-columns:1fr}.top{padding:14px 58px}.gear{right:10px}.big{font-size:3.2rem}
+.diagnostics{grid-template-columns:repeat(2,1fr)}.analytics{grid-template-columns:repeat(2,1fr)}
+.cal-grid{grid-template-columns:1fr}.event-row{grid-template-columns:1fr;gap:4px}}@media(max-width:460px){
+.status-grid,.gates{grid-template-columns:1fr}.status-item{border-right:0!important;
+border-bottom:1px solid var(--line)}.status-item:last-child{border-bottom:0}.top{padding:14px 58px}.gear{right:10px}.big{font-size:3.2rem}
 .modal .settings{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){.sweep{animation:none}.blip,.fill{transition:none}}
+@page{size:letter portrait;margin:.45in}
 @media print{*{color:#000!important;background:#fff!important;box-shadow:none!important;
 text-shadow:none!important}.top{text-align:left}.wrap{width:100%;padding:8px}.panel{border:1px solid #000;
-break-inside:avoid}.gate-tools,.settings,.sweep,.echo,.offline{display:none!important}.scope,.meter,.gate,.box{
 break-inside:avoid}.gear,.modal,.gate-tools,.settings,.sweep,.echo,.offline{display:none!important}.scope,.meter,.gate,.box{
 border-color:#000}.fill,.blip:after{background:#000!important}.gates{grid-template-columns:repeat(3,1fr)}
-.panel.collapsed>:not(.title){display:revert!important}.panel>.title:after{display:none}.footer{display:none}}
+.panel.collapsed>:not(.title){display:revert!important}.panel>.title:after{display:none}
+#gatePanel{break-inside:auto}.gate{break-inside:avoid}.print-meta{display:block!important;
+margin:8px 0 0;color:#333!important;font-size:9pt}.footer{display:block!important;margin-top:12px;
+border-top:1px solid #000;padding-top:6px}
+.scope{background:
+radial-gradient(ellipse at 50% 100%,transparent 19%,#555 19.5%,transparent 20%,
+transparent 39%,#555 39.5%,transparent 40%,transparent 59%,#555 59.5%,
+transparent 60%,transparent 79%,#555 79.5%,transparent 80%),
+linear-gradient(90deg,transparent 49.7%,#555 50%,transparent 50.3%),
+linear-gradient(27deg,transparent 49.7%,#555 50%,transparent 50.3%),
+linear-gradient(-27deg,transparent 49.7%,#555 50%,transparent 50.3%),#fff!important;
+-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
+.scope-label{color:#000!important;font-weight:700}.blip{border-color:#000!important}}
 </style>
 </head>
 <body>
 <header class="top"><h1>Ryancito Presence Radar</h1>
 <button class="gear" type="button" aria-label="Open settings" onclick="openSettings()">⚙</button>
+<div id="printMeta" class="print-meta"></div>
 </header>
 <main class="wrap">
 <div id="offline" class="offline">Dashboard connection lost — retrying…</div>
 <section class="panel">
- <h2 class="title">Status</h2>
+ <h2 class="title">Status &amp; System Health</h2>
  <div class="status-grid">
-  <div><div class="label">Detection</div><div><span id="status" class="dot starting">Starting…</span></div></div>
-  <div><div class="label">IP</div><div id="ip" class="value">-</div></div>
-  <div><div class="label">Board</div><div>Nano ESP32</div></div>
-  <div><div class="label">SSID</div><div id="ssid" class="value">-</div></div>
-  <div><div class="label">Last sensor frame</div><div id="age">-</div></div>
-  <div><div class="label">Sensor</div><div>LD2410 Engineering Mode</div></div>
+  <div class="status-item"><div class="label">Detection</div><div><span id="status" class="dot starting">Starting…</span></div>
+   <div class="status-sub">Range <span id="statusDistance">0 ft 0 in</span></div></div>
+  <div class="status-item"><div class="label">Sensor</div><div id="sensorMode">Starting…</div>
+   <div class="status-sub">Last frame <span id="age">-</span></div></div>
+  <div class="status-item"><div class="label">Network</div><div id="ssid" class="value">-</div>
+   <div id="ip" class="status-sub">-</div></div>
+  <div class="status-item"><div class="label">Device</div><div>Nano ESP32</div>
+   <div class="status-sub">LD2410C · UART 256000</div></div>
+ </div>
+ <div class="diagnostics">
+  <div class="diag"><div class="label">Sensor health</div><div id="sensorHealth" class="diag-value">-</div>
+   <div class="diag-sub">Engineering frames <span id="engineeringFrames">0</span></div></div>
+  <div class="diag"><div class="label">Sensor data</div><div id="fps" class="diag-value">0/s</div>
+   <div class="diag-sub"><span id="frames">0</span> frames · <span id="errors">0</span> errors</div></div>
+  <div class="diag"><div class="label">Connection</div><div id="rssi" class="diag-value">-</div>
+   <div class="diag-sub">Dashboard <span id="latency">-</span></div></div>
+  <div class="diag"><div class="label">System</div><div id="memory" class="diag-value">-</div>
+   <div class="diag-sub">Clock <span id="timeSync">-</span></div></div>
  </div>
 </section>
 <section class="panel">
@@ -229,9 +298,9 @@ border-color:#000}.fill,.blip:after{background:#000!important}.gates{grid-templa
  <div class="radar-layout">
   <div class="scope" aria-label="Range-only radar visualization">
    <div class="sweep"></div><div id="blip" class="blip" style="opacity:0"></div>
-   <span class="scope-label l0">0</span><span class="scope-label l5">5 ft</span>
-   <span class="scope-label l10">10</span><span class="scope-label l15">15</span>
-   <span class="scope-label l20">20 ft</span>
+   <span id="range0" class="scope-label l0">0</span><span id="range25" class="scope-label l5">5 ft</span>
+   <span id="range50" class="scope-label l10">10</span><span id="range75" class="scope-label l15">15</span>
+   <span id="range100" class="scope-label l20">20 ft</span>
   </div>
   <div>
    <div><span id="inches" class="big">0</span> <span class="unit">in</span></div>
@@ -249,6 +318,7 @@ border-color:#000}.fill,.blip:after{background:#000!important}.gates{grid-templa
   <button id="moveToggle" class="active" onclick="toggleKind('move')">Moving gates</button>
   <button id="stillToggle" class="secondary active" onclick="toggleKind('still')">Stationary gates</button>
  </div>
+ <div id="gateWarning" class="notice">Waiting for LD2410C engineering frames. The board will retry automatically.</div>
  <div id="gateFilter" class="gate-filter" aria-label="Individual gate visibility"></div>
  <div id="gates" class="gates"></div>
 </section>
@@ -260,7 +330,7 @@ border-color:#000}.fill,.blip:after{background:#000!important}.gates{grid-templa
  </div>
 </section>
 <section class="panel">
- <h2 class="title">Occupancy Intelligence</h2>
+ <h2 class="title">Logs</h2>
  <div class="analytics">
   <div class="box"><div class="label">Occupied since</div><div id="occupiedSince">Clear</div></div>
   <div class="box"><div class="label">Current session</div><div id="sessionTime">0:00</div></div>
@@ -268,45 +338,12 @@ border-color:#000}.fill,.blip:after{background:#000!important}.gates{grid-templa
   <div class="box"><div class="label">Occupied today</div><div id="todayTotal">0 min</div></div>
   <div class="box"><div class="label">Sessions today</div><div id="sessionCount">0</div></div>
  </div>
-</section>
-<section class="panel">
- <h2 class="title">Calibration Lab</h2>
- <div class="cal-grid">
-  <div class="cal-copy">
-   <p>First capture an empty room, then walk and pause at the distances you want detected.
-   Calibration runs entirely in this browser and does not change the sensor.</p>
-   <div class="cal-actions">
-    <button id="emptyButton" onclick="startCalibration('empty')">Capture empty room · 30s</button>
-    <button id="walkButton" onclick="startCalibration('walk')" disabled>Capture walk test · 30s</button>
-    <button onclick="resetCalibration()">Reset</button>
-   </div>
-   <div class="progress"><div id="calProgress" class="progress-fill"></div></div>
-   <div id="calStatus">Ready to capture the empty-room noise floor.</div>
-   <div class="notice">Recommendations are advisory; this version never writes thresholds to the LD2410C.</div>
-  </div>
-  <div>
-   <div class="label">Recommended moving / stationary thresholds</div>
-   <div id="recommendations" class="recommendations"></div>
-  </div>
- </div>
-</section>
-<section class="panel">
- <h2 class="title">Nearby BLE Signals</h2>
- <p class="ble-note">Nearby Bluetooth advertisements can provide proximity clues. They cannot
- reliably identify a radar target, and phones may rotate their private addresses.</p>
- <div id="bleState" class="label">Waiting for the first passive scan…</div>
- <div id="bleList" class="ble-list"></div>
-</section>
-<section class="panel">
- <h2 class="title">System Health</h2>
- <div class="diagnostics">
-  <div class="diag"><div class="label">Frames</div><div id="frames" class="diag-value">0</div></div>
-  <div class="diag"><div class="label">Frame rate</div><div id="fps" class="diag-value">0/s</div></div>
-  <div class="diag"><div class="label">Parse errors</div><div id="errors" class="diag-value">0</div></div>
-  <div class="diag"><div class="label">Wi-Fi RSSI</div><div id="rssi" class="diag-value">-</div></div>
-  <div class="diag"><div class="label">API latency</div><div id="latency" class="diag-value">-</div></div>
-  <div class="diag"><div class="label">Free memory</div><div id="memory" class="diag-value">-</div></div>
- </div>
+ <details class="journal">
+  <summary>Security Event Journal
+   <span id="journalSummary" class="journal-summary">No security events recorded yet.</span>
+  </summary>
+  <div id="eventList" class="event-list"><div class="event-detail">No events recorded yet.</div></div>
+ </details>
 </section>
 <div class="footer">LD2410 range/presence dashboard · live JSON updates</div>
 </main>
@@ -318,15 +355,39 @@ border-color:#000}.fill,.blip:after{background:#000!important}.gates{grid-templa
   <div class="settings">
    <label>Smoothing<select id="smoothSetting"><option value="0">Raw</option>
    <option value=".25">Responsive</option><option value=".12">Smooth</option></select></label>
-   <label>Radar range<select id="rangeSetting"><option value="609.6">20 ft</option>
-   <option value="304.8">10 ft</option><option value="914.4">30 ft</option></select></label>
+   <label>Radar range<select id="rangeSetting"><option value="304.8">10 ft</option>
+   <option value="609.6">20 ft</option><option value="914.4">30 ft</option></select></label>
    <label>History window<select id="historyWindow"><option value="60000">1 minute</option>
    <option value="3600000">1 hour</option><option value="86400000">24 hours</option></select></label>
   </div>
   <div class="modal-actions">
    <button onclick="clearHistory()">Clear history</button>
-   <button onclick="window.print()">Print dashboard</button>
+   <button onclick="exportEventsCsv()">Export CSV</button>
+   <button onclick="exportEvents()">Export JSON Lines</button>
+   <button onclick="window.open('/metrics','_blank')">Open metrics</button>
+   <button onclick="printDashboard()">Print or save PDF</button>
    <button onclick="resetPanelLayout()">Reset panel layout</button>
+  </div>
+  <div class="settings-section">
+   <h3>Calibration Lab</h3>
+   <div class="cal-grid">
+    <div class="cal-copy">
+     <p>First capture an empty room, then walk and pause at the distances you want detected.
+     Calibration runs entirely in this browser and does not change the sensor.</p>
+     <div class="cal-actions">
+      <button id="emptyButton" onclick="startCalibration('empty')">Capture empty room · 30s</button>
+      <button id="walkButton" onclick="startCalibration('walk')" disabled>Capture walk test · 30s</button>
+      <button onclick="resetCalibration()">Reset</button>
+     </div>
+     <div class="progress"><div id="calProgress" class="progress-fill"></div></div>
+     <div id="calStatus">Ready to capture the empty-room noise floor.</div>
+     <div class="notice">Recommendations are advisory; nothing is written to the LD2410C.</div>
+    </div>
+    <div>
+     <div class="label">Recommended moving / stationary thresholds</div>
+     <div id="recommendations" class="recommendations"></div>
+    </div>
+   </div>
   </div>
  </section>
 </div>
@@ -337,11 +398,23 @@ function openSettings(){$("settingsModal").hidden=false;document.body.style.over
  $("settingsModal").querySelector(".close").focus()}
 function closeSettings(){$("settingsModal").hidden=true;document.body.style.overflow=""}
 function modalBackdrop(event){if(event.target===$("settingsModal"))closeSettings()}
+function printDashboard(){closeSettings();setTimeout(()=>window.print(),80)}
 function resetPanelLayout(){localStorage.removeItem("ryancitoCollapsedPanels");
  document.querySelectorAll(".panel").forEach(panel=>panel.classList.remove("collapsed"));
  document.querySelectorAll(".panel>.title").forEach(title=>title.setAttribute("aria-expanded","true"));
  closeSettings()}
 addEventListener("keydown",event=>{if(event.key==="Escape"&&!$("settingsModal").hidden)closeSettings()});
+let printCollapsed=[];
+addEventListener("beforeprint",()=>{
+ printCollapsed=Array.from(document.querySelectorAll(".panel.collapsed"));
+ printCollapsed.forEach(panel=>panel.classList.remove("collapsed"));
+ const detection=$("status").textContent,distance=$("feet").textContent,ip=$("ip").textContent;
+ $("printMeta").textContent="Snapshot: "+new Date().toLocaleString()+" | Detection: "+detection+
+  " | Distance: "+distance+" ft | Device: "+ip;
+ drawHistory();
+});
+addEventListener("afterprint",()=>{printCollapsed.forEach(panel=>panel.classList.add("collapsed"));
+ printCollapsed=[]});
 const collapsedPanels=JSON.parse(localStorage.getItem("ryancitoCollapsedPanels")||"{}");
 document.querySelectorAll(".panel>.title").forEach(title=>{
  const panel=title.parentElement,key=title.textContent.trim();
@@ -357,17 +430,21 @@ let showMove=true,showStill=true,busy=false,failures=0,smoothedDistance=0,lastEc
 let lastFrameCount=0,lastFrameTime=performance.now();
 let latestRender=null,renderPending=false,streamConnected=false,lastStreamMessage=0;
 const samples=[],prefs=JSON.parse(localStorage.getItem("ryancitoRadarPrefs")||"{}");
-let historyDb=null,lastStored=0,occupiedSince=0,lastMovement=0,previousState=0;
+let historyDb=null,lastStored=0,occupiedSince=0,lastMovement=0,previousState=null,previousStale=null;
 let calibration=null,emptyCapture=null,walkCapture=null;
 const dayKey=()=>new Date().toISOString().slice(0,10);
 let daily=JSON.parse(localStorage.getItem("ryancitoDaily")||"{}");
 const gates=$("gates"),heatmap=$("heatmap");
 const gateVisible=Array(9).fill(true),gateFilter=$("gateFilter");
+function feetInches(cm){
+ const total=Math.max(0,Math.round((Number(cm)||0)/2.54));
+ return Math.floor(total/12)+" ft "+total%12+" in";
+}
 for(let i=0;i<9;i++){
- const start=(i*.75).toFixed(2),end=((i+1)*.75).toFixed(2);
+ const start=feetInches(i*75),end=feetInches((i+1)*75);
  gateFilter.insertAdjacentHTML("beforeend",`<button id="gbtn${i}" class="active" onclick="toggleGate(${i})">G${i}</button>`);
  gates.insertAdjacentHTML("beforeend",`<div id="gate${i}" class="gate"><div class="gate-head">
- <b>Gate ${i}</b><span>${start}–${end} m</span></div>
+ <b>Gate ${i}</b><span>${start}–${end}</span></div>
  <div class="row move-row"><span>M</span><div class="meter"><div id="m${i}" class="fill move-fill"></div></div><span id="mv${i}">0</span></div>
  <div class="row still-row"><span>S</span><div class="meter"><div id="s${i}" class="fill still-fill"></div></div><span id="sv${i}">0</span></div></div>`);
  heatmap.insertAdjacentHTML("beforeend",`<div class="heat-cell"><div id="hm${i}" class="heat-m"></div>
@@ -376,9 +453,13 @@ for(let i=0;i<9;i++){
 function savePrefs(){localStorage.setItem("ryancitoRadarPrefs",JSON.stringify({
  showMove,showStill,gateVisible,smoothing:$("smoothSetting").value,range:$("rangeSetting").value}))}
 function openHistoryDb(){
- const req=indexedDB.open("RyancitoRadar",1);
- req.onupgradeneeded=()=>{const db=req.result,store=db.createObjectStore("samples",{keyPath:"t"});
- store.createIndex("time","t")};req.onsuccess=()=>{historyDb=req.result;pruneHistory();loadHistory()};
+ const req=indexedDB.open("RyancitoRadar",2);
+ req.onupgradeneeded=()=>{const db=req.result;
+  if(!db.objectStoreNames.contains("samples")){const store=db.createObjectStore("samples",{keyPath:"t"});
+   store.createIndex("time","t")}
+  if(!db.objectStoreNames.contains("events")){const events=db.createObjectStore("events",
+   {keyPath:"id",autoIncrement:true});events.createIndex("time","t")}};
+ req.onsuccess=()=>{historyDb=req.result;pruneHistory();loadHistory();loadEvents()};
 }
 function storeHistory(d){
  const now=Date.now();if(!historyDb||now-lastStored<1000)return;lastStored=now;
@@ -394,10 +475,74 @@ function loadHistory(){
  const req=historyDb.transaction("samples").objectStore("samples").getAll(range);
  req.onsuccess=()=>{samples.length=0;for(const p of req.result)samples.push({t:p.t,d:p.d,s:p.s});drawHistory()};
 }
+function eventName(previous,current){
+ if(previous===0&&current>0)return "presence_started";
+ if(previous>0&&current===0)return "presence_cleared";
+ if(current===1&&previous!==1)return "movement_started";
+ if(current===2&&previous!==2)return "stationary_started";
+ if(current===3&&previous!==3)return "combined_presence";
+ return "state_changed";
+}
+function recordEvent(d,previous,forcedName){
+ if(!historyDb)return;const event={t:Date.now(),event:forcedName||eventName(previous,d.state),
+  previous_state:previous,state:d.state,distance_cm:d.distance_cm,move_energy:d.move_energy,
+  still_energy:d.still_energy,move_gates:d.move_gates.slice(),still_gates:d.still_gates.slice()};
+ const tx=historyDb.transaction("events","readwrite");tx.objectStore("events").add(event);
+ tx.oncomplete=loadEvents;
+}
+function loadEvents(){
+ if(!historyDb)return;const request=historyDb.transaction("events").objectStore("events").getAll();
+ request.onsuccess=()=>{const events=request.result.slice(-50).reverse(),list=$("eventList");
+  list.replaceChildren();if(!events.length){list.textContent="No events recorded yet.";
+   $("journalSummary").textContent="No security events recorded yet.";return}
+  const latest=events[0],latestName=latest.event.replaceAll("_"," ");
+  $("journalSummary").textContent=events.length+" recent events · Latest: "+latestName+
+   " at "+new Date(latest.t).toLocaleTimeString();
+  for(const event of events){const row=document.createElement("div");row.className="event-row";
+   const stamp=document.createElement("div");stamp.className="event-time";
+   stamp.textContent=new Date(event.t).toLocaleString();
+   const name=document.createElement("div");name.className="event-name";
+   name.textContent=event.event.replaceAll("_"," ");
+   const detail=document.createElement("div");detail.className="event-detail";
+   detail.textContent=feetInches(event.distance_cm);row.append(stamp,name,detail);list.append(row)}};
+}
+function exportEvents(){
+ if(!historyDb)return;const request=historyDb.transaction("events").objectStore("events").getAll();
+ request.onsuccess=()=>{const lines=request.result.map(event=>JSON.stringify(
+  Object.assign({time_iso:new Date(event.t).toISOString()},event))).join("\n")+"\n";
+  const url=URL.createObjectURL(new Blob([lines],{type:"application/x-ndjson"}));
+  const link=document.createElement("a");link.href=url;
+  link.download="ryancito-events-"+new Date().toISOString().slice(0,10)+".jsonl";link.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000)};
+}
+function csvCell(value){
+ const text=String(value==null?"":value);
+ return /[",\r\n]/.test(text)?'"'+text.replaceAll('"','""')+'"':text;
+}
+function exportEventsCsv(){
+ if(!historyDb)return;const request=historyDb.transaction("events").objectStore("events").getAll();
+ request.onsuccess=()=>{
+  const columns=["time_iso","event","previous_state","state","distance_ft_in","distance_cm",
+   "move_energy","still_energy","move_gates","still_gates"];
+  const rows=request.result.map(event=>[
+   new Date(event.t).toISOString(),event.event,event.previous_state,event.state,
+   feetInches(event.distance_cm),event.distance_cm,event.move_energy,event.still_energy,
+   (event.move_gates||[]).join("|"),(event.still_gates||[]).join("|")
+  ].map(csvCell).join(","));
+  const csv=columns.join(",")+"\r\n"+rows.join("\r\n")+"\r\n";
+  const url=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));
+  const link=document.createElement("a");link.href=url;
+  link.download="ryancito-security-events-"+new Date().toISOString().slice(0,10)+".csv";
+  link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+ };
+}
 function formatDuration(ms){const min=Math.floor(ms/60000),hr=Math.floor(min/60);
  return hr?hr+"h "+min%60+"m":min+"m"}
 function updateOccupancy(d){
  const now=Date.now(),key=dayKey();if(!daily[key])daily[key]={total:0,sessions:0,lastTick:now};
+ if(previousState!==null&&previousState!==d.state)recordEvent(d,previousState);
+ if(previousStale!==null&&previousStale!==d.sensor_stale)recordEvent(
+  d,previousState,d.sensor_stale?"sensor_stale":"sensor_recovered");
  const rec=daily[key];if(d.state){
   if(!occupiedSince){occupiedSince=now;rec.sessions++}
   rec.total+=Math.min(2000,now-rec.lastTick);if(d.state===1||d.state===3)lastMovement=now;
@@ -406,7 +551,7 @@ function updateOccupancy(d){
  $("sessionTime").textContent=occupiedSince?formatDuration(now-occupiedSince):"0 min";
  $("lastMovement").textContent=lastMovement?new Date(lastMovement).toLocaleTimeString():"-";
  $("todayTotal").textContent=formatDuration(rec.total);$("sessionCount").textContent=rec.sessions;
- previousState=d.state;
+ previousState=d.state;previousStale=d.sensor_stale;
 }
 function blankCapture(){return Array.from({length:9},()=>({m:[],s:[]}))}
 function startCalibration(kind){
@@ -443,35 +588,14 @@ function queueRender(data,latency){
 function decodeStream(a){const names=["No one detected","Moving target","Stationary target","Moving + Stationary"];
  return {state:a[0],status:names[a[0]]||"Unknown",distance_cm:a[1],move_distance_cm:a[2],
  still_distance_cm:a[3],move_energy:a[4],still_energy:a[5],move_gates:a[6],still_gates:a[7],
- age_ms:a[8],frames:a[9],parse_errors:a[10],ip:a[11],ssid:a[12],rssi:a[13],mem_free:a[14]}}
+ age_ms:a[8],frames:a[9],parse_errors:a[10],ip:a[11],ssid:a[12],rssi:a[13],mem_free:a[14],
+ ntp_synced:!!a[15],sensor_stale:!!a[16],engineering_active:!!a[17],
+ engineering_frames:a[18]||0,basic_frames:a[19]||0}}
 function startStream(){
  if(!window.EventSource)return;const source=new EventSource("/api/stream");
  source.onopen=()=>{streamConnected=true;failures=0;$("offline").style.display="none"};
  source.onmessage=event=>{lastStreamMessage=Date.now();queueRender(decodeStream(JSON.parse(event.data)),0)};
  source.onerror=()=>{streamConnected=false;if(Date.now()-lastStreamMessage>3000)$("offline").style.display="block"};
-}
-function renderBle(result){
- const list=$("bleList");list.replaceChildren();
- if(!result.available){$("bleState").textContent="BLE is unavailable in this MicroPython build.";return}
- $("bleState").textContent=result.scanning?"Passive scan in progress…":
-  result.devices.length+" recent advertiser"+(result.devices.length===1?"":"s");
- for(const device of result.devices){
-  const row=document.createElement("div");row.className="ble-device";
-  const identity=document.createElement("div"),name=document.createElement("div"),address=document.createElement("div");
-  name.className="ble-name";name.textContent=device.name;address.className="ble-address";
-  address.textContent=device.address+(device.address_type?" · private/random":" · public");
-  identity.append(name,address);
-  const strength=document.createElement("div"),signal=document.createElement("div"),fill=document.createElement("i");
-  signal.className="signal";fill.style.width=Math.max(0,Math.min(100,(device.rssi+100)/65*100))+"%";
-  signal.append(fill);strength.append(signal);
-  const rssi=document.createElement("div");rssi.textContent=device.rssi+" dBm";
-  const age=document.createElement("div");age.textContent=device.age_ms<1500?"now":Math.round(device.age_ms/1000)+"s ago";
-  row.append(identity,strength,rssi,age);list.append(row);
- }
-}
-async function updateBle(){
- try{const response=await fetch("/api/ble?t="+Date.now(),{cache:"no-store"});
-  if(response.ok)renderBle(await response.json())}catch(error){}
 }
 function toggleKind(kind){
  if(kind==="move"){showMove=!showMove;$("moveToggle").classList.toggle("active",showMove)}
@@ -492,8 +616,25 @@ function addEcho(distance,state,range){
  e.style.color=state===2?"var(--purple)":state===3?"var(--warn)":"var(--cyan)";
  document.querySelector(".scope").appendChild(e);setTimeout(()=>e.remove(),4100);
 }
-function clearHistory(){samples.length=0;drawHistory();if(historyDb){
- historyDb.transaction("samples","readwrite").objectStore("samples").clear()}}
+function clearHistory(){
+ if(!confirm("Clear radar history and the security event journal in this browser?"))return;
+ samples.length=0;drawHistory();daily={};localStorage.removeItem("ryancitoDaily");
+ occupiedSince=0;lastMovement=0;previousState=0;previousStale=null;
+ if(historyDb){const tx=historyDb.transaction(["samples","events"],"readwrite");
+  tx.objectStore("samples").clear();tx.objectStore("events").clear();
+  tx.oncomplete=()=>{loadEvents();$("todayTotal").textContent="0 min";
+   $("sessionCount").textContent="0";$("occupiedSince").textContent="Clear";
+   $("sessionTime").textContent="0 min";$("lastMovement").textContent="-"}}
+}
+function updateRadarLabels(){
+ const feet=+$("rangeSetting").value/30.48;
+ const label=value=>Number.isInteger(value)?String(value):value.toFixed(1);
+ $("range0").textContent="0";
+ $("range25").textContent=label(feet*.25)+" ft";
+ $("range50").textContent=label(feet*.5);
+ $("range75").textContent=label(feet*.75);
+ $("range100").textContent=label(feet)+" ft";
+}
 function drawHistory(){
  const c=$("history"),x=c.getContext("2d"),w=c.width,h=c.height,range=+$("rangeSetting").value;
  x.clearRect(0,0,w,h);x.strokeStyle="#17383d";x.fillStyle="#78aeb1";x.font="10px monospace";
@@ -515,6 +656,7 @@ function render(d,latency){
  smoothedDistance=alpha?(smoothedDistance?smoothedDistance+(d.distance_cm-smoothedDistance)*alpha:d.distance_cm):d.distance_cm;
  $("inches").textContent=Math.round(smoothedDistance/2.54);
  $("feet").textContent=(smoothedDistance/30.48).toFixed(1);
+ $("statusDistance").textContent=feetInches(smoothedDistance);
  $("me").textContent=d.move_energy;$("se").textContent=d.still_energy;
  $("age").textContent=d.age_ms<1500?"now":(d.age_ms/1000).toFixed(1)+" s ago";
  const range=+$("rangeSetting").value,blip=$("blip"),pct=Math.min(100,Math.max(0,smoothedDistance/range*100));
@@ -534,6 +676,14 @@ function render(d,latency){
  $("rssi").textContent=d.rssi==null?"AP mode":d.rssi+" dBm";
  $("latency").textContent=latency===0?"LIVE":Math.round(latency)+" ms";
  $("memory").textContent=d.mem_free==null?"-":Math.round(d.mem_free/1024)+" KB";
+ $("timeSync").textContent=d.ntp_synced?"NTP synced":"Not synced";
+ const engineering=!!d.engineering_active;
+ $("sensorMode").textContent=engineering?"Engineering mode":"Basic mode · retrying";
+ $("sensorMode").style.color=engineering?"var(--cyan)":"var(--warn)";
+ $("engineeringFrames").textContent=d.engineering_frames||0;
+ $("gateWarning").style.display=engineering?"none":"block";
+ $("sensorHealth").textContent=d.sensor_stale?"STALE":engineering?"Healthy":"Gate data unavailable";
+ $("sensorHealth").style.color=d.sensor_stale?"var(--danger)":engineering?"var(--cyan)":"var(--warn)";
  samples.push({t:Date.now(),d:smoothedDistance,s:d.state});
  while(samples.length&&samples[0].t<Date.now()-+$("historyWindow").value)samples.shift();drawHistory();
  storeHistory(d);updateOccupancy(d);calibrationSample(d);
@@ -549,15 +699,16 @@ async function update(){
  finally{busy=false}
 }
 $("smoothSetting").value=prefs.smoothing||".25";$("rangeSetting").value=prefs.range||"609.6";
-$("smoothSetting").onchange=savePrefs;$("rangeSetting").onchange=()=>{savePrefs();drawHistory()};
+$("smoothSetting").onchange=savePrefs;$("rangeSetting").onchange=()=>{
+ savePrefs();updateRadarLabels();drawHistory()};
 $("historyWindow").onchange=loadHistory;
 if(prefs.showMove===false)toggleKind("move");if(prefs.showStill===false)toggleKind("still");
 if(Array.isArray(prefs.gateVisible))for(let i=0;i<9;i++)if(prefs.gateVisible[i]===false)toggleGate(i);
+updateRadarLabels();
 for(let i=0;i<9;i++)$("recommendations").insertAdjacentHTML("beforeend",
  `<div class="recommendation"><b>G${i}</b>M -<br>S -</div>`);
 openHistoryDb();startStream();
 (function fallbackLoop(){if(!streamConnected)update();setTimeout(fallbackLoop,document.hidden?2000:500)})();
-updateBle();setInterval(updateBle,5000);
 addEventListener("resize",drawHistory);
 </script>
 </body>
@@ -570,117 +721,293 @@ def ticks_age(now, then):
         return 0
     return max(0, time.ticks_diff(now, then))
 
-def ble_address_text(address):
-    return ":".join("{:02X}".format(value) for value in address)
+
+def ble_advertising_payload(name):
+    encoded_name = name.encode()
+    return b"\x02\x01\x06" + bytes(
+        (len(encoded_name) + 1, 0x09)
+    ) + encoded_name
 
 
-def ble_name_from_payload(payload):
-    position = 0
-    while position + 1 < len(payload):
-        field_length = payload[position]
-        if not field_length:
-            break
-        end = position + field_length + 1
-        if end > len(payload):
-            break
-        field_type = payload[position + 1]
-        if field_type in (0x08, 0x09):
-            try:
-                return bytes(payload[position + 2:end]).decode("utf-8")
-            except Exception:
-                return "Named BLE device"
-        position = end
-    return ""
+def start_ble_advertising():
+    if ble is not None:
+        try:
+            ble.gap_advertise(
+                500000,
+                adv_data=ble_advertising_payload("Ryancito Radar"),
+            )
+        except Exception as error:
+            print("BLE advertising failed:", error)
 
 
 def ble_irq(event, data):
-    global ble_scanning, ble_last_scan
-    # MicroPython ESP32 BLE IRQ values: 5=scan result, 6=scan complete.
-    if event == 5:
-        address_type, address, advertisement_type, rssi, payload = data
-        address_copy = bytes(address)
-        key = ble_address_text(address_copy)
-        existing = ble_devices.get(key)
-        name = ble_name_from_payload(payload)
-        if existing:
-            existing["rssi"] = rssi
-            existing["last_seen"] = time.ticks_ms()
-            existing["seen"] += 1
-            if name:
-                existing["name"] = name
-        elif len(ble_devices) < BLE_MAX_DEVICES:
-            ble_devices[key] = {
-                "address": key,
-                "address_type": address_type,
-                "name": name,
-                "rssi": rssi,
-                "last_seen": time.ticks_ms(),
-                "seen": 1,
-            }
-    elif event == 6:
-        ble_scanning = False
-        ble_last_scan = time.ticks_ms()
+    global ble_pending_command
+    if event == 1:
+        connection_handle, address_type, address = data
+        ble_connections.add(connection_handle)
+    elif event == 2:
+        connection_handle, address_type, address = data
+        ble_connections.discard(connection_handle)
+        start_ble_advertising()
+    elif event == 3:
+        connection_handle, value_handle = data
+        if value_handle == ble_command_handle:
+            try:
+                ble_pending_command = (
+                    ble.gatts_read(value_handle).decode().strip()
+                )
+            except Exception:
+                ble_pending_command = ""
 
 
-def init_ble():
-    global ble
+def set_ble_info(message):
+    if ble is not None and ble_info_handle is not None:
+        try:
+            ble.gatts_write(ble_info_handle, message.encode())
+        except Exception:
+            pass
+
+
+def init_phone_ble(ip):
+    global ble, ble_status_handle, ble_info_handle, ble_command_handle
     if bluetooth is None:
-        print("BLE module unavailable; proximity scanning disabled")
+        print("BLE peripheral unavailable in this MicroPython build")
         return
     try:
         ble = bluetooth.BLE()
         ble.active(True)
         ble.irq(ble_irq)
-        print("BLE proximity scanner ready")
+
+        service_uuid = bluetooth.UUID(
+            "7A100001-52A1-4DAD-A8B9-21C255D0B700"
+        )
+        status_uuid = bluetooth.UUID(
+            "7A100002-52A1-4DAD-A8B9-21C255D0B700"
+        )
+        info_uuid = bluetooth.UUID(
+            "7A100003-52A1-4DAD-A8B9-21C255D0B700"
+        )
+        command_uuid = bluetooth.UUID(
+            "7A100004-52A1-4DAD-A8B9-21C255D0B700"
+        )
+        service = (
+            service_uuid,
+            (
+                (
+                    status_uuid,
+                    bluetooth.FLAG_READ | bluetooth.FLAG_NOTIFY,
+                ),
+                (info_uuid, bluetooth.FLAG_READ),
+                (command_uuid, bluetooth.FLAG_WRITE),
+            ),
+        )
+        ((ble_status_handle, ble_info_handle, ble_command_handle),) = (
+            ble.gatts_register_services((service,))
+        )
+        ble.gatts_set_buffer(ble_info_handle, 128)
+        ble.gatts_set_buffer(ble_command_handle, 96)
+        ble.gatts_write(ble_status_handle, b"0,0,0,0")
+        set_ble_info("Ryancito Radar | " + BUILD_VERSION + " | " + ip)
+        start_ble_advertising()
+        mode = "protected commands" if BLE_PIN is not None else "read-only"
+        print("Phone BLE ready as 'Ryancito Radar' (" + mode + ")")
     except Exception as error:
         ble = None
-        print("BLE initialization failed:", error)
+        print("BLE peripheral initialization failed:", error)
 
 
-def service_ble():
-    global ble_scanning, ble_last_scan
-    if ble is None or ble_scanning:
+def service_phone_ble():
+    global ble_last_frame, ble_pending_command
+    if ble is None:
         return
-    now = time.ticks_ms()
-    if ble_last_scan and time.ticks_diff(now, ble_last_scan) < BLE_SCAN_INTERVAL_MS:
-        return
-    try:
-        # A brief passive scan limits contention with the Wi-Fi dashboard.
-        ble.gap_scan(BLE_SCAN_MS, 30000, 15000, False)
-        ble_scanning = True
-    except Exception as error:
-        ble_last_scan = now
-        print("BLE scan start failed:", error)
 
-
-def ble_status_json():
-    now = time.ticks_ms()
-    expired = []
-    devices = []
-    for key, device in ble_devices.items():
-        age = ticks_age(now, device["last_seen"])
-        if age > BLE_DEVICE_TTL_MS:
-            expired.append(key)
-            continue
-        devices.append({
-            "address": device["address"],
-            "address_type": device["address_type"],
-            "name": device["name"] or "Unknown advertiser",
-            "rssi": device["rssi"],
-            "age_ms": age,
-            "seen": device["seen"],
-        })
-    for key in expired:
+    if radar["frames"] != ble_last_frame:
+        ble_last_frame = radar["frames"]
+        packet = "{},{},{},{}".format(
+            radar["state"],
+            radar["distance_cm"],
+            radar["move_energy"],
+            radar["still_energy"],
+        ).encode()
         try:
-            del ble_devices[key]
+            ble.gatts_write(ble_status_handle, packet)
+            for connection_handle in tuple(ble_connections):
+                try:
+                    ble.gatts_notify(
+                        connection_handle,
+                        ble_status_handle,
+                        packet,
+                    )
+                except Exception:
+                    ble_connections.discard(connection_handle)
         except Exception:
             pass
-    devices.sort(key=lambda item: item["rssi"], reverse=True)
-    return json.dumps({
-        "available": ble is not None,
-        "scanning": ble_scanning,
-        "devices": devices,
-    })
+
+    if ble_pending_command is None:
+        return
+    request = ble_pending_command
+    ble_pending_command = None
+
+    if BLE_PIN is None:
+        set_ble_info("Commands disabled: BLE_PIN is not configured")
+        return
+    expected_prefix = str(BLE_PIN) + "|"
+    if not request.startswith(expected_prefix):
+        set_ble_info("Command rejected")
+        return
+
+    command = request[len(expected_prefix):].lower()
+    if command == "ping":
+        set_ble_info("PONG | " + BUILD_VERSION)
+    elif command == "engineering":
+        enable_engineering_mode()
+        set_ble_info("Engineering mode requested")
+    elif command == "reboot":
+        set_ble_info("Rebooting")
+        time.sleep_ms(250)
+        machine.reset()
+    else:
+        set_ble_info("Unknown command")
+
+
+def sync_device_time():
+    global ntp_synced, ntp_last_sync
+    if ntptime is None:
+        return
+    ntp_last_sync = time.ticks_ms()
+    try:
+        ntptime.settime()
+        ntp_synced = True
+        print("NTP time synchronized")
+    except Exception as error:
+        print("NTP synchronization failed:", error)
+
+
+def sensor_is_stale():
+    if not radar["updated_ms"]:
+        return True
+    return time.ticks_diff(
+        time.ticks_ms(),
+        radar["updated_ms"],
+    ) > 5000
+
+
+def engineering_is_stale():
+    if not radar["engineering_updated_ms"]:
+        return True
+    return time.ticks_diff(
+        time.ticks_ms(),
+        radar["engineering_updated_ms"],
+    ) > 5000
+
+
+def service_sensor_recovery():
+    global sensor_last_recovery
+    sensor_stale = sensor_is_stale()
+    engineering_stale = engineering_is_stale()
+    if not sensor_stale and not engineering_stale:
+        return
+    now = time.ticks_ms()
+    if sensor_last_recovery and time.ticks_diff(
+        now,
+        sensor_last_recovery,
+    ) < 10000:
+        return
+    sensor_last_recovery = now
+    if sensor_stale:
+        print("Sensor data stale; requesting engineering mode")
+    else:
+        print("Basic LD2410C frames received; retrying engineering mode for gate data")
+    enable_engineering_mode()
+
+
+def service_time_sync():
+    if ntptime is None:
+        return
+    if not ntp_last_sync or time.ticks_diff(
+        time.ticks_ms(),
+        ntp_last_sync,
+    ) >= 21600000:
+        sync_device_time()
+
+
+def service_udp_telemetry():
+    global telemetry_last_state
+    if not TELEMETRY_HOST or not radar["frames"]:
+        return
+    current_state = radar["state"]
+    current_signature = (current_state, sensor_is_stale())
+    if current_signature == telemetry_last_state:
+        return
+    telemetry_last_state = current_signature
+    event = {
+        "source": "ryancito-radar",
+        "version": BUILD_VERSION,
+        "time": time.time(),
+        "state": current_state,
+        "status": radar["status"],
+        "distance_cm": radar["distance_cm"],
+        "move_energy": radar["move_energy"],
+        "still_energy": radar["still_energy"],
+        "sensor_stale": sensor_is_stale(),
+    }
+    telemetry_socket = None
+    try:
+        telemetry_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        telemetry_socket.sendto(
+            json.dumps(event).encode(),
+            (TELEMETRY_HOST, TELEMETRY_PORT),
+        )
+    except Exception as error:
+        print("UDP telemetry error:", error)
+    finally:
+        if telemetry_socket:
+            try:
+                telemetry_socket.close()
+            except Exception:
+                pass
+
+
+def metrics_text(wlan, ip):
+    try:
+        rssi = wlan.status("rssi") if wlan.isconnected() else 0
+    except Exception:
+        rssi = 0
+    free_memory = gc.mem_free() if hasattr(gc, "mem_free") else 0
+    lines = (
+        "# HELP ryancito_presence Presence detected by the radar.",
+        "# TYPE ryancito_presence gauge",
+        "ryancito_presence {}".format(1 if radar["state"] else 0),
+        "# HELP ryancito_detection_state LD2410 target state 0-3.",
+        "# TYPE ryancito_detection_state gauge",
+        "ryancito_detection_state {}".format(radar["state"]),
+        "# HELP ryancito_distance_cm Current target distance.",
+        "# TYPE ryancito_distance_cm gauge",
+        "ryancito_distance_cm {}".format(radar["distance_cm"]),
+        "# HELP ryancito_uart_frames_total Valid UART frames parsed.",
+        "# TYPE ryancito_uart_frames_total counter",
+        "ryancito_uart_frames_total {}".format(radar["frames"]),
+        "# HELP ryancito_parse_errors_total UART parse errors.",
+        "# TYPE ryancito_parse_errors_total counter",
+        "ryancito_parse_errors_total {}".format(radar["parse_errors"]),
+        "# HELP ryancito_sensor_stale Sensor data older than five seconds.",
+        "# TYPE ryancito_sensor_stale gauge",
+        "ryancito_sensor_stale {}".format(1 if sensor_is_stale() else 0),
+        "# HELP ryancito_wifi_rssi_dbm Wi-Fi signal strength.",
+        "# TYPE ryancito_wifi_rssi_dbm gauge",
+        "ryancito_wifi_rssi_dbm {}".format(rssi),
+        "# HELP ryancito_free_memory_bytes MicroPython free heap.",
+        "# TYPE ryancito_free_memory_bytes gauge",
+        "ryancito_free_memory_bytes {}".format(free_memory),
+        "# HELP ryancito_ntp_synced Whether NTP has synchronized.",
+        "# TYPE ryancito_ntp_synced gauge",
+        "ryancito_ntp_synced {}".format(1 if ntp_synced else 0),
+        'ryancito_build_info{{version="{}",ip="{}"}} 1'.format(
+            BUILD_VERSION,
+            ip,
+        ),
+    )
+    return "\n".join(lines) + "\n"
 
 
 def connect_wifi():
@@ -807,9 +1134,13 @@ def parse_data_frame(frame):
     # Engineering layout: bytes 17/18 are max moving/still gates,
     # bytes 19..27 are moving energies, 28..36 stationary energies.
     if report_type == 0x01 and len(frame) >= 41:
+        radar["engineering_frames"] += 1
+        radar["engineering_updated_ms"] = time.ticks_ms()
         for gate in range(9):
             radar["move_gates"][gate] = frame[19 + gate]
             radar["still_gates"][gate] = frame[28 + gate]
+    else:
+        radar["basic_frames"] += 1
 
     radar["updated_ms"] = time.ticks_ms()
     radar["frames"] += 1
@@ -876,12 +1207,17 @@ def status_json(ip, wlan, active_ssid, network_mode):
         "still_gates": radar["still_gates"],
         "age_ms": ticks_age(now, radar["updated_ms"]),
         "frames": radar["frames"],
+        "basic_frames": radar["basic_frames"],
+        "engineering_frames": radar["engineering_frames"],
+        "engineering_active": not engineering_is_stale(),
         "parse_errors": radar["parse_errors"],
         "ip": ip,
         "ssid": active_ssid,
         "network_mode": network_mode,
         "rssi": wlan.status("rssi") if wlan.isconnected() else None,
         "mem_free": gc.mem_free() if hasattr(gc, "mem_free") else None,
+        "ntp_synced": ntp_synced,
+        "sensor_stale": sensor_is_stale(),
     }
     return json.dumps(data)
 
@@ -903,6 +1239,11 @@ def compact_status(ip, wlan, active_ssid):
         active_ssid,
         wlan.status("rssi") if wlan.isconnected() else None,
         gc.mem_free() if hasattr(gc, "mem_free") else None,
+        1 if ntp_synced else 0,
+        1 if sensor_is_stale() else 0,
+        1 if not engineering_is_stale() else 0,
+        radar["engineering_frames"],
+        radar["basic_frames"],
     ])
 
 
@@ -961,11 +1302,11 @@ def handle_client(client, ip, wlan, active_ssid, network_mode):
         )
         client.settimeout(0.08)
         return True
-    elif path == b"/api/ble":
+    elif path == b"/metrics":
         send_response(
             client,
-            ble_status_json(),
-            "application/json; charset=utf-8",
+            metrics_text(wlan, ip),
+            "text/plain; version=0.0.4; charset=utf-8",
         )
     elif path == b"/favicon.ico":
         send_response(client, b"", "image/x-icon", "204 No Content")
@@ -987,7 +1328,12 @@ def run_server(wlan, ip, active_ssid, network_mode):
     stream_clients = []
     while True:
         service_sensor()
-        service_ble()
+        service_phone_ble()
+        service_sensor_recovery()
+        service_time_sync()
+        service_udp_telemetry()
+        if watchdog is not None:
+            watchdog.feed()
         client = None
         try:
             client, _ = server.accept()
@@ -1042,10 +1388,17 @@ def run_server(wlan, ip, active_ssid, network_mode):
 
 
 def main():
+    global watchdog
     print("Ryancito Presence Radar build:", BUILD_VERSION)
     wlan, _ap, ip, active_ssid, network_mode = connect_wifi()
     enable_engineering_mode()
-    init_ble()
+    init_phone_ble(ip)
+    sync_device_time()
+    try:
+        watchdog = machine.WDT(timeout=30000)
+        print("Hardware watchdog enabled")
+    except Exception as error:
+        print("Watchdog unavailable:", error)
     time.sleep_ms(400)
     run_server(wlan, ip, active_ssid, network_mode)
 
