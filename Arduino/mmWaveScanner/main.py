@@ -32,7 +32,7 @@ except ImportError:
 
 WEB_PORT = 80
 POLL_MS = 250
-BUILD_VERSION = "2026.07.25-r5-sentinel-ui"
+BUILD_VERSION = "2026.07.25-r6-browser-intelligence"
 
 UART_BAUD = 256000
 # Physical Nano header D9 = ESP32 GPIO18; header D10 = ESP32 GPIO21.
@@ -145,10 +145,19 @@ background:var(--panel2)}.diag-value{font-size:1.05rem;font-weight:bold;margin-t
 .settings{display:flex;flex-wrap:wrap;gap:12px;align-items:end;margin-top:14px}.settings label{
 color:var(--purple);font-size:.75rem}.settings select{display:block;margin-top:4px;color:var(--cyan);
 background:#071014;border:1px solid #2a6267;padding:7px;font:inherit}
+.analytics{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}.analytics .box{min-height:76px}
+.cal-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.cal-copy{color:var(--muted);
+line-height:1.45}.progress{height:14px;border:1px solid #2a6267;background:#071014;margin:12px 0}
+.progress-fill{height:100%;width:0;background:var(--cyan);box-shadow:0 0 8px #63f5f099;
+transition:width .2s}.recommendations{display:grid;grid-template-columns:repeat(9,1fr);gap:5px}
+.recommendation{padding:8px 4px;border:1px solid var(--line);text-align:center;font-size:.68rem}
+.recommendation b{display:block;color:var(--purple);margin-bottom:4px}.cal-actions{display:flex;
+flex-wrap:wrap;gap:8px}.notice{color:var(--warn);font-size:.75rem;margin-top:10px}
 @media(max-width:760px){.wrap{padding:10px}.panel{padding:14px;border-radius:12px}
 .status-grid{grid-template-columns:repeat(2,1fr)}.radar-layout{grid-template-columns:1fr}
 .gates{grid-template-columns:repeat(2,1fr)}.charts{grid-template-columns:1fr}
-.diagnostics{grid-template-columns:repeat(3,1fr)}}@media(max-width:460px){
+.diagnostics{grid-template-columns:repeat(3,1fr)}.analytics{grid-template-columns:repeat(2,1fr)}
+.cal-grid{grid-template-columns:1fr}}@media(max-width:460px){
 .status-grid,.gates{grid-template-columns:1fr}.top{padding:14px}.big{font-size:3.2rem}}
 @media(prefers-reduced-motion:reduce){.sweep{animation:none}.blip,.fill{transition:none}}
 @media print{*{color:#000!important;background:#fff!important;box-shadow:none!important;
@@ -204,9 +213,41 @@ border-color:#000}.fill,.blip:after{background:#000!important}.gates{grid-templa
 </section>
 <section class="panel">
  <h2 class="title">Last 60 Seconds</h2>
+ <h2 class="title">Detection History</h2>
  <div class="charts">
   <div><div class="label">Target distance and state</div><canvas id="history" width="720" height="210"></canvas></div>
   <div><div class="label">Live energy heatmap · Gate 0–8</div><div id="heatmap" class="heatmap"></div></div>
+ </div>
+</section>
+<section class="panel">
+ <h2 class="title">Occupancy Intelligence</h2>
+ <div class="analytics">
+  <div class="box"><div class="label">Occupied since</div><div id="occupiedSince">Clear</div></div>
+  <div class="box"><div class="label">Current session</div><div id="sessionTime">0:00</div></div>
+  <div class="box"><div class="label">Last movement</div><div id="lastMovement">-</div></div>
+  <div class="box"><div class="label">Occupied today</div><div id="todayTotal">0 min</div></div>
+  <div class="box"><div class="label">Sessions today</div><div id="sessionCount">0</div></div>
+ </div>
+</section>
+<section class="panel">
+ <h2 class="title">Calibration Lab</h2>
+ <div class="cal-grid">
+  <div class="cal-copy">
+   <p>First capture an empty room, then walk and pause at the distances you want detected.
+   Calibration runs entirely in this browser and does not change the sensor.</p>
+   <div class="cal-actions">
+    <button id="emptyButton" onclick="startCalibration('empty')">Capture empty room · 30s</button>
+    <button id="walkButton" onclick="startCalibration('walk')" disabled>Capture walk test · 30s</button>
+    <button onclick="resetCalibration()">Reset</button>
+   </div>
+   <div class="progress"><div id="calProgress" class="progress-fill"></div></div>
+   <div id="calStatus">Ready to capture the empty-room noise floor.</div>
+   <div class="notice">Recommendations are advisory; this version never writes thresholds to the LD2410C.</div>
+  </div>
+  <div>
+   <div class="label">Recommended moving / stationary thresholds</div>
+   <div id="recommendations" class="recommendations"></div>
+  </div>
  </div>
 </section>
 <section class="panel">
@@ -224,6 +265,8 @@ border-color:#000}.fill,.blip:after{background:#000!important}.gates{grid-templa
   <option value=".25">Responsive</option><option value=".12">Smooth</option></select></label>
   <label>Radar range<select id="rangeSetting"><option value="609.6">20 ft</option>
   <option value="304.8">10 ft</option><option value="914.4">30 ft</option></select></label>
+  <label>History window<select id="historyWindow"><option value="60000">1 minute</option>
+  <option value="3600000">1 hour</option><option value="86400000">24 hours</option></select></label>
   <button onclick="clearHistory()">Clear history</button>
  </div>
 </section>
@@ -235,6 +278,10 @@ const $=id=>document.getElementById(id);
 let showMove=true,showStill=true,busy=false,failures=0,smoothedDistance=0,lastEcho=0;
 let lastFrameCount=0,lastFrameTime=performance.now();
 const samples=[],prefs=JSON.parse(localStorage.getItem("ryancitoRadarPrefs")||"{}");
+let historyDb=null,lastStored=0,occupiedSince=0,lastMovement=0,previousState=0;
+let calibration=null,emptyCapture=null,walkCapture=null;
+const dayKey=()=>new Date().toISOString().slice(0,10);
+let daily=JSON.parse(localStorage.getItem("ryancitoDaily")||"{}");
 const gates=$("gates"),heatmap=$("heatmap");
 const gateVisible=Array(9).fill(true),gateFilter=$("gateFilter");
 for(let i=0;i<9;i++){
@@ -249,6 +296,66 @@ for(let i=0;i<9;i++){
 }
 function savePrefs(){localStorage.setItem("ryancitoRadarPrefs",JSON.stringify({
  showMove,showStill,gateVisible,smoothing:$("smoothSetting").value,range:$("rangeSetting").value}))}
+function openHistoryDb(){
+ const req=indexedDB.open("RyancitoRadar",1);
+ req.onupgradeneeded=()=>{const db=req.result,store=db.createObjectStore("samples",{keyPath:"t"});
+ store.createIndex("time","t")};req.onsuccess=()=>{historyDb=req.result;pruneHistory();loadHistory()};
+}
+function storeHistory(d){
+ const now=Date.now();if(!historyDb||now-lastStored<1000)return;lastStored=now;
+ const tx=historyDb.transaction("samples","readwrite");
+ tx.objectStore("samples").put({t:now,s:d.state,d:d.distance_cm,m:d.move_gates,q:d.still_gates});
+}
+function pruneHistory(){
+ if(!historyDb)return;const tx=historyDb.transaction("samples","readwrite");
+ const range=IDBKeyRange.upperBound(Date.now()-86400000);tx.objectStore("samples").delete(range);
+}
+function loadHistory(){
+ if(!historyDb)return;const span=+$("historyWindow").value,range=IDBKeyRange.lowerBound(Date.now()-span);
+ const req=historyDb.transaction("samples").objectStore("samples").getAll(range);
+ req.onsuccess=()=>{samples.length=0;for(const p of req.result)samples.push({t:p.t,d:p.d,s:p.s});drawHistory()};
+}
+function formatDuration(ms){const min=Math.floor(ms/60000),hr=Math.floor(min/60);
+ return hr?hr+"h "+min%60+"m":min+"m"}
+function updateOccupancy(d){
+ const now=Date.now(),key=dayKey();if(!daily[key])daily[key]={total:0,sessions:0,lastTick:now};
+ const rec=daily[key];if(d.state){
+  if(!occupiedSince){occupiedSince=now;rec.sessions++}
+  rec.total+=Math.min(2000,now-rec.lastTick);if(d.state===1||d.state===3)lastMovement=now;
+ }else occupiedSince=0;rec.lastTick=now;localStorage.setItem("ryancitoDaily",JSON.stringify(daily));
+ $("occupiedSince").textContent=occupiedSince?new Date(occupiedSince).toLocaleTimeString():"Clear";
+ $("sessionTime").textContent=occupiedSince?formatDuration(now-occupiedSince):"0 min";
+ $("lastMovement").textContent=lastMovement?new Date(lastMovement).toLocaleTimeString():"-";
+ $("todayTotal").textContent=formatDuration(rec.total);$("sessionCount").textContent=rec.sessions;
+ previousState=d.state;
+}
+function blankCapture(){return Array.from({length:9},()=>({m:[],s:[]}))}
+function startCalibration(kind){
+ calibration={kind,start:Date.now(),data:blankCapture()};$("emptyButton").disabled=true;$("walkButton").disabled=true;
+ $("calStatus").textContent=kind==="empty"?"Keep the room empty…":"Walk, stop, and sit throughout the detection area…";
+}
+function calibrationSample(d){
+ if(!calibration)return;for(let i=0;i<9;i++){calibration.data[i].m.push(d.move_gates[i]||0);
+ calibration.data[i].s.push(d.still_gates[i]||0)}
+ const elapsed=Date.now()-calibration.start;$("calProgress").style.width=Math.min(100,elapsed/300)+"%";
+ if(elapsed<30000)return;const kind=calibration.kind,data=calibration.data;calibration=null;
+ if(kind==="empty"){emptyCapture=data;$("walkButton").disabled=false;$("calStatus").textContent="Empty-room capture complete. Start the walk test."}
+ else{walkCapture=data;$("emptyButton").disabled=false;$("calStatus").textContent="Calibration complete. Review the recommendations.";showRecommendations()}
+ $("calProgress").style.width="0";
+}
+function percentile(a,p){if(!a.length)return 0;const b=a.slice().sort((x,y)=>x-y);return b[Math.floor((b.length-1)*p)]}
+function showRecommendations(){
+ if(!emptyCapture||!walkCapture)return;let html="";
+ for(let i=0;i<9;i++){const nm=percentile(emptyCapture[i].m,.95),ns=percentile(emptyCapture[i].s,.95);
+ const wm=percentile(walkCapture[i].m,.65),ws=percentile(walkCapture[i].s,.65);
+ const rm=Math.round(Math.max(nm+8,Math.min(95,(nm+wm)/2)));
+ const rs=Math.round(Math.max(ns+8,Math.min(95,(ns+ws)/2)));
+ html+=`<div class="recommendation"><b>G${i}</b>M ${rm}<br>S ${rs}</div>`}
+ $("recommendations").innerHTML=html;
+}
+function resetCalibration(){calibration=null;emptyCapture=null;walkCapture=null;$("emptyButton").disabled=false;
+ $("walkButton").disabled=true;$("calProgress").style.width="0";$("calStatus").textContent="Ready to capture the empty-room noise floor.";
+ $("recommendations").innerHTML=""}
 function toggleKind(kind){
  if(kind==="move"){showMove=!showMove;$("moveToggle").classList.toggle("active",showMove)}
  else{showStill=!showStill;$("stillToggle").classList.toggle("active",showStill)}
@@ -268,14 +375,15 @@ function addEcho(distance,state,range){
  e.style.color=state===2?"var(--purple)":state===3?"var(--warn)":"var(--cyan)";
  document.querySelector(".scope").appendChild(e);setTimeout(()=>e.remove(),4100);
 }
-function clearHistory(){samples.length=0;drawHistory()}
+function clearHistory(){samples.length=0;drawHistory();if(historyDb){
+ historyDb.transaction("samples","readwrite").objectStore("samples").clear()}}
 function drawHistory(){
  const c=$("history"),x=c.getContext("2d"),w=c.width,h=c.height,range=+$("rangeSetting").value;
  x.clearRect(0,0,w,h);x.strokeStyle="#17383d";x.fillStyle="#78aeb1";x.font="10px monospace";
  for(let i=0;i<=4;i++){const y=8+(h-24)*i/4;x.beginPath();x.moveTo(0,y);x.lineTo(w,y);x.stroke();
  x.fillText(Math.round(range/30.48*(1-i/4))+"ft",4,y-2)}
- if(samples.length<2)return;const cutoff=Date.now()-60000;x.beginPath();
- samples.forEach((p,i)=>{const px=(p.t-cutoff)/60000*w,py=8+(h-24)*(1-Math.min(1,p.d/range));
+ if(samples.length<2)return;const span=+$("historyWindow").value,cutoff=Date.now()-span;x.beginPath();
+ samples.forEach((p,i)=>{const px=(p.t-cutoff)/span*w,py=8+(h-24)*(1-Math.min(1,p.d/range));
  i?x.lineTo(px,py):x.moveTo(px,py)});x.strokeStyle="#63f5f0";x.lineWidth=2;
  x.shadowColor="#63f5f0";x.shadowBlur=5;x.stroke();x.shadowBlur=0;
  for(const p of samples){if(!p.s)continue;const px=(p.t-cutoff)/60000*w;
@@ -309,7 +417,8 @@ function render(d,latency){
  $("rssi").textContent=d.rssi==null?"AP mode":d.rssi+" dBm";$("latency").textContent=Math.round(latency)+" ms";
  $("memory").textContent=d.mem_free==null?"-":Math.round(d.mem_free/1024)+" KB";
  samples.push({t:Date.now(),d:smoothedDistance,s:d.state});
- while(samples.length&&samples[0].t<Date.now()-60000)samples.shift();drawHistory();
+ while(samples.length&&samples[0].t<Date.now()-+$("historyWindow").value)samples.shift();drawHistory();
+ storeHistory(d);updateOccupancy(d);calibrationSample(d);
 }
 async function update(){
  if(busy||document.hidden)return;busy=true;
@@ -323,9 +432,12 @@ async function update(){
 }
 $("smoothSetting").value=prefs.smoothing||".25";$("rangeSetting").value=prefs.range||"609.6";
 $("smoothSetting").onchange=savePrefs;$("rangeSetting").onchange=()=>{savePrefs();drawHistory()};
+$("historyWindow").onchange=loadHistory;
 if(prefs.showMove===false)toggleKind("move");if(prefs.showStill===false)toggleKind("still");
 if(Array.isArray(prefs.gateVisible))for(let i=0;i<9;i++)if(prefs.gateVisible[i]===false)toggleGate(i);
-update();setInterval(update,__POLL_MS__);addEventListener("resize",drawHistory);
+for(let i=0;i<9;i++)$("recommendations").insertAdjacentHTML("beforeend",
+ `<div class="recommendation"><b>G${i}</b>M -<br>S -</div>`);
+openHistoryDb();update();setInterval(update,__POLL_MS__);addEventListener("resize",drawHistory);
 </script>
 </body>
 </html>
