@@ -32,7 +32,7 @@ except ImportError:
 
 WEB_PORT = 80
 POLL_MS = 250
-BUILD_VERSION = "2026.07.25-r8-caret-panels"
+BUILD_VERSION = "2026.07.25-r9-live-stream"
 
 UART_BAUD = 256000
 # Physical Nano header D9 = ESP32 GPIO18; header D10 = ESP32 GPIO21.
@@ -293,6 +293,7 @@ document.querySelectorAll(".panel>.title").forEach(title=>{
 });
 let showMove=true,showStill=true,busy=false,failures=0,smoothedDistance=0,lastEcho=0;
 let lastFrameCount=0,lastFrameTime=performance.now();
+let latestRender=null,renderPending=false,streamConnected=false,lastStreamMessage=0;
 const samples=[],prefs=JSON.parse(localStorage.getItem("ryancitoRadarPrefs")||"{}");
 let historyDb=null,lastStored=0,occupiedSince=0,lastMovement=0,previousState=0;
 let calibration=null,emptyCapture=null,walkCapture=null;
@@ -372,6 +373,21 @@ function showRecommendations(){
 function resetCalibration(){calibration=null;emptyCapture=null;walkCapture=null;$("emptyButton").disabled=false;
  $("walkButton").disabled=true;$("calProgress").style.width="0";$("calStatus").textContent="Ready to capture the empty-room noise floor.";
  $("recommendations").innerHTML=""}
+function queueRender(data,latency){
+ latestRender={data,latency};if(renderPending)return;renderPending=true;
+ requestAnimationFrame(()=>{renderPending=false;if(latestRender){const item=latestRender;latestRender=null;
+ render(item.data,item.latency)}});
+}
+function decodeStream(a){const names=["No one detected","Moving target","Stationary target","Moving + Stationary"];
+ return {state:a[0],status:names[a[0]]||"Unknown",distance_cm:a[1],move_distance_cm:a[2],
+ still_distance_cm:a[3],move_energy:a[4],still_energy:a[5],move_gates:a[6],still_gates:a[7],
+ age_ms:a[8],frames:a[9],parse_errors:a[10],ip:a[11],ssid:a[12],rssi:a[13],mem_free:a[14]}}
+function startStream(){
+ if(!window.EventSource)return;const source=new EventSource("/api/stream");
+ source.onopen=()=>{streamConnected=true;failures=0;$("offline").style.display="none"};
+ source.onmessage=event=>{lastStreamMessage=Date.now();queueRender(decodeStream(JSON.parse(event.data)),0)};
+ source.onerror=()=>{streamConnected=false;if(Date.now()-lastStreamMessage>3000)$("offline").style.display="block"};
+}
 function toggleKind(kind){
  if(kind==="move"){showMove=!showMove;$("moveToggle").classList.toggle("active",showMove)}
  else{showStill=!showStill;$("stillToggle").classList.toggle("active",showStill)}
@@ -431,6 +447,8 @@ function render(d,latency){
  lastFrameCount=d.frames;lastFrameTime=now}
  $("frames").textContent=d.frames;$("errors").textContent=d.parse_errors;
  $("rssi").textContent=d.rssi==null?"AP mode":d.rssi+" dBm";$("latency").textContent=Math.round(latency)+" ms";
+ $("rssi").textContent=d.rssi==null?"AP mode":d.rssi+" dBm";
+ $("latency").textContent=latency===0?"LIVE":Math.round(latency)+" ms";
  $("memory").textContent=d.mem_free==null?"-":Math.round(d.mem_free/1024)+" KB";
  samples.push({t:Date.now(),d:smoothedDistance,s:d.state});
  while(samples.length&&samples[0].t<Date.now()-+$("historyWindow").value)samples.shift();drawHistory();
@@ -441,7 +459,7 @@ async function update(){
  try{
   const started=performance.now();
   const r=await fetch("/api/status?t="+Date.now(),{cache:"no-store"});
-  if(!r.ok)throw Error(r.status);render(await r.json(),performance.now()-started);
+  if(!r.ok)throw Error(r.status);queueRender(await r.json(),performance.now()-started);
   failures=0;$("offline").style.display="none";
  }catch(e){if(++failures>2)$("offline").style.display="block"}
  finally{busy=false}
@@ -453,7 +471,9 @@ if(prefs.showMove===false)toggleKind("move");if(prefs.showStill===false)toggleKi
 if(Array.isArray(prefs.gateVisible))for(let i=0;i<9;i++)if(prefs.gateVisible[i]===false)toggleGate(i);
 for(let i=0;i<9;i++)$("recommendations").insertAdjacentHTML("beforeend",
  `<div class="recommendation"><b>G${i}</b>M -<br>S -</div>`);
-openHistoryDb();update();setInterval(update,__POLL_MS__);addEventListener("resize",drawHistory);
+openHistoryDb();startStream();
+(function fallbackLoop(){if(!streamConnected)update();setTimeout(fallbackLoop,document.hidden?2000:500)})();
+addEventListener("resize",drawHistory);
 </script>
 </body>
 </html>
@@ -668,6 +688,26 @@ def status_json(ip, wlan, active_ssid, network_mode):
     }
     return json.dumps(data)
 
+def compact_status(ip, wlan, active_ssid):
+    """Small positional packet for the persistent browser stream."""
+    return json.dumps([
+        radar["state"],
+        radar["distance_cm"],
+        radar["move_distance_cm"],
+        radar["still_distance_cm"],
+        radar["move_energy"],
+        radar["still_energy"],
+        radar["move_gates"],
+        radar["still_gates"],
+        ticks_age(time.ticks_ms(), radar["updated_ms"]),
+        radar["frames"],
+        radar["parse_errors"],
+        ip,
+        active_ssid,
+        wlan.status("rssi") if wlan.isconnected() else None,
+        gc.mem_free() if hasattr(gc, "mem_free") else None,
+    ])
+
 
 def send_all(client, data):
     view = memoryview(data)
@@ -699,7 +739,7 @@ def handle_client(client, ip, wlan, active_ssid, network_mode):
     client.settimeout(0.35)
     request = client.recv(768)
     if not request:
-        return
+        return False
     first_line = request.split(b"\r\n", 1)[0]
     parts = first_line.split()
     path = parts[1].split(b"?", 1)[0] if len(parts) >= 2 else b"/"
@@ -712,10 +752,23 @@ def handle_client(client, ip, wlan, active_ssid, network_mode):
             status_json(ip, wlan, active_ssid, network_mode),
             "application/json; charset=utf-8",
         )
+    elif path == b"/api/stream":
+        send_all(
+            client,
+            b"HTTP/1.1 200 OK\r\n"
+            b"Content-Type: text/event-stream\r\n"
+            b"Cache-Control: no-cache\r\n"
+            b"Connection: keep-alive\r\n"
+            b"X-Accel-Buffering: no\r\n\r\n"
+            b"retry: 1000\r\n\r\n",
+        )
+        client.settimeout(0.08)
+        return True
     elif path == b"/favicon.ico":
         send_response(client, b"", "image/x-icon", "204 No Content")
     else:
         send_response(client, "Not found", "text/plain; charset=utf-8", "404 Not Found")
+    return False
 
 
 def run_server(wlan, ip, active_ssid, network_mode):
@@ -727,6 +780,8 @@ def run_server(wlan, ip, active_ssid, network_mode):
     print("Radar server running at http://" + ip)
 
     last_gc = time.ticks_ms()
+    last_stream = time.ticks_ms()
+    stream_clients = []
     while True:
         service_sensor()
         client = None
@@ -736,8 +791,17 @@ def run_server(wlan, ip, active_ssid, network_mode):
             pass
 
         if client:
+            keep_open = False
             try:
-                handle_client(client, ip, wlan, active_ssid, network_mode)
+                keep_open = handle_client(client, ip, wlan, active_ssid, network_mode)
+                if keep_open:
+                    if len(stream_clients) >= 2:
+                        old_client = stream_clients.pop(0)
+                        try:
+                            old_client.close()
+                        except Exception:
+                            pass
+                    stream_clients.append(client)
             except OSError as error:
                 # Browser cancellations and timeouts are routine during polling.
                 error_number = error.args[0] if error.args else None
@@ -746,12 +810,27 @@ def run_server(wlan, ip, active_ssid, network_mode):
             except Exception as error:
                 print("Client error:", error)
             finally:
-                try:
-                    client.close()
-                except Exception:
-                    pass
+                if not keep_open:
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
 
         now = time.ticks_ms()
+        if stream_clients and time.ticks_diff(now, last_stream) >= 100:
+            event = ("data:" + compact_status(ip, wlan, active_ssid) + "\n\n").encode()
+            live_clients = []
+            for stream_client in stream_clients:
+                try:
+                    send_all(stream_client, event)
+                    live_clients.append(stream_client)
+                except Exception:
+                    try:
+                        stream_client.close()
+                    except Exception:
+                        pass
+            stream_clients = live_clients
+            last_stream = now
         if time.ticks_diff(now, last_gc) >= 30000:
             gc.collect()
             last_gc = now
