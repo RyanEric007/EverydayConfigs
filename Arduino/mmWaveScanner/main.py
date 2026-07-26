@@ -23,6 +23,11 @@ import time
 from machine import Pin, UART
 
 try:
+    import bluetooth
+except ImportError:
+    bluetooth = None
+
+try:
     from secret import HOME_SSID, HOME_PASSWORD, AP_SSID, AP_PASSWORD
 except ImportError:
     raise ImportError(
@@ -32,13 +37,17 @@ except ImportError:
 
 WEB_PORT = 80
 POLL_MS = 250
-BUILD_VERSION = "2026.07.25-r9-live-stream"
+BUILD_VERSION = "2026.07.25-r10-modern-ble"
 
 UART_BAUD = 256000
 # Physical Nano header D9 = ESP32 GPIO18; header D10 = ESP32 GPIO21.
 UART_TX_PIN = 18
 UART_RX_PIN = 21
 MAX_UART_BUFFER = 1024
+BLE_SCAN_MS = 5000
+BLE_SCAN_INTERVAL_MS = 30000
+BLE_DEVICE_TTL_MS = 120000
+BLE_MAX_DEVICES = 20
 
 DATA_HEADER = b"\xF4\xF3\xF2\xF1"
 DATA_FOOTER = b"\xF8\xF7\xF6\xF5"
@@ -54,6 +63,10 @@ uart = UART(
 # Use immutable bytes for compatibility with the Arduino Nano ESP32
 # MicroPython port, whose bytearray does not support resizing operations.
 rx_buffer = b""
+ble = None
+ble_devices = {}
+ble_scanning = False
+ble_last_scan = 0
 radar = {
     "state": 0,
     "status": "Starting...",
@@ -80,11 +93,16 @@ INDEX_HTML = r"""<!doctype html>
 :root{--bg:#05080d;--panel:#090e16;--panel2:#0c111a;--cyan:#63f5f0;
 --purple:#c36dff;--muted:#78aeb1;--line:#17383d;--warn:#ffd166;--danger:#ff6881}
 *{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--cyan);
-font:15px "Courier New",monospace}body{padding:0 0 28px}.top{padding:18px;text-align:center;
-border-bottom:1px solid #2a6267}.top h1{margin:0;font-size:clamp(1.25rem,4vw,1.8rem);
+font:15px ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}body{padding:0 0 28px;
+background:radial-gradient(circle at 50% -20%,#15243a 0,transparent 38%),var(--bg)}
+.top{position:sticky;top:0;z-index:30;padding:17px 64px;text-align:center;border-bottom:1px solid #2a6267;
+background:#05080de8;backdrop-filter:blur(14px)}.top h1{margin:0;font-size:clamp(1.25rem,4vw,1.8rem);
 text-shadow:0 0 12px #63f5f099}.wrap{width:min(1220px,100%);margin:auto;padding:16px}
+.gear{position:absolute;right:18px;top:50%;width:42px;height:42px;transform:translateY(-50%);
+padding:0;border-radius:50%;font-size:1.35rem;display:grid;place-items:center}
 .panel{background:var(--panel);border:1px solid #2a6267;border-radius:16px;padding:18px;
-margin-bottom:16px}.title{margin:0 0 15px;color:var(--purple);font-size:1.1rem}
+margin-bottom:16px;box-shadow:0 15px 40px #0003}.title{margin:0 0 15px;color:var(--purple);
+font-size:1.1rem;letter-spacing:.02em}
 .panel>.title{position:relative;padding-right:30px;cursor:pointer;user-select:none}
 .panel>.title:after{content:"⌃";position:absolute;right:3px;top:-5px;color:var(--cyan);
 font-size:1.55rem;line-height:1}.panel.collapsed>.title{margin-bottom:0}
@@ -159,22 +177,40 @@ transition:width .2s}.recommendations{display:grid;grid-template-columns:repeat(
 .recommendation{padding:8px 4px;border:1px solid var(--line);text-align:center;font-size:.68rem}
 .recommendation b{display:block;color:var(--purple);margin-bottom:4px}.cal-actions{display:flex;
 flex-wrap:wrap;gap:8px}.notice{color:var(--warn);font-size:.75rem;margin-top:10px}
+.ble-list{display:grid;gap:8px}.ble-device{display:grid;grid-template-columns:minmax(150px,1.4fr)
+minmax(150px,1fr) 90px 90px;gap:12px;align-items:center;padding:11px 12px;border:1px solid var(--line);
+border-radius:10px;background:var(--panel2)}.ble-name{font-weight:700}.ble-address{color:var(--muted);
+font:12px ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere}.signal{height:8px;
+border-radius:8px;background:#071014;overflow:hidden}.signal>i{display:block;height:100%;background:var(--cyan)}
+.ble-note{color:var(--muted);line-height:1.4;margin:0 0 12px}.modal{position:fixed;inset:0;z-index:100;
+display:grid;place-items:center;padding:16px;background:#000a;backdrop-filter:blur(8px)}.modal[hidden]{display:none}
+.modal-card{width:min(520px,100%);max-height:90vh;overflow:auto;padding:20px;border:1px solid #2a6267;
+border-radius:18px;background:#090e16;box-shadow:0 25px 80px #000}.modal-head{display:flex;
+align-items:center;justify-content:space-between;margin-bottom:18px}.modal-head h2{margin:0;color:var(--purple)}
+.close{width:38px;height:38px;padding:0;border-radius:50%;font-size:1.25rem}.modal .settings{
+display:grid;grid-template-columns:1fr 1fr;margin:0}.modal .settings select{width:100%}
+.modal-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
 @media(max-width:760px){.wrap{padding:10px}.panel{padding:14px;border-radius:12px}
 .status-grid{grid-template-columns:repeat(2,1fr)}.radar-layout{grid-template-columns:1fr}
 .gates{grid-template-columns:repeat(2,1fr)}.charts{grid-template-columns:1fr}
 .diagnostics{grid-template-columns:repeat(3,1fr)}.analytics{grid-template-columns:repeat(2,1fr)}
-.cal-grid{grid-template-columns:1fr}}@media(max-width:460px){
+.cal-grid{grid-template-columns:1fr}.ble-device{grid-template-columns:1fr 1fr}}@media(max-width:460px){
 .status-grid,.gates{grid-template-columns:1fr}.top{padding:14px}.big{font-size:3.2rem}}
+.status-grid,.gates{grid-template-columns:1fr}.top{padding:14px 58px}.gear{right:10px}.big{font-size:3.2rem}
+.modal .settings{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){.sweep{animation:none}.blip,.fill{transition:none}}
 @media print{*{color:#000!important;background:#fff!important;box-shadow:none!important;
 text-shadow:none!important}.top{text-align:left}.wrap{width:100%;padding:8px}.panel{border:1px solid #000;
 break-inside:avoid}.gate-tools,.settings,.sweep,.echo,.offline{display:none!important}.scope,.meter,.gate,.box{
+break-inside:avoid}.gear,.modal,.gate-tools,.settings,.sweep,.echo,.offline{display:none!important}.scope,.meter,.gate,.box{
 border-color:#000}.fill,.blip:after{background:#000!important}.gates{grid-template-columns:repeat(3,1fr)}
 .panel.collapsed>:not(.title){display:revert!important}.panel>.title:after{display:none}.footer{display:none}}
 </style>
 </head>
 <body>
-<header class="top"><h1>Ryancito Presence Radar</h1></header>
+<header class="top"><h1>Ryancito Presence Radar</h1>
+<button class="gear" type="button" aria-label="Open settings" onclick="openSettings()">⚙</button>
+</header>
 <main class="wrap">
 <div id="offline" class="offline">Dashboard connection lost — retrying…</div>
 <section class="panel">
@@ -212,7 +248,6 @@ border-color:#000}.fill,.blip:after{background:#000!important}.gates{grid-templa
  <div class="gate-tools">
   <button id="moveToggle" class="active" onclick="toggleKind('move')">Moving gates</button>
   <button id="stillToggle" class="secondary active" onclick="toggleKind('still')">Stationary gates</button>
-  <button onclick="window.print()">Print</button>
  </div>
  <div id="gateFilter" class="gate-filter" aria-label="Individual gate visibility"></div>
  <div id="gates" class="gates"></div>
@@ -256,6 +291,13 @@ border-color:#000}.fill,.blip:after{background:#000!important}.gates{grid-templa
  </div>
 </section>
 <section class="panel">
+ <h2 class="title">Nearby BLE Signals</h2>
+ <p class="ble-note">Nearby Bluetooth advertisements can provide proximity clues. They cannot
+ reliably identify a radar target, and phones may rotate their private addresses.</p>
+ <div id="bleState" class="label">Waiting for the first passive scan…</div>
+ <div id="bleList" class="ble-list"></div>
+</section>
+<section class="panel">
  <h2 class="title">System Health</h2>
  <div class="diagnostics">
   <div class="diag"><div class="label">Frames</div><div id="frames" class="diag-value">0</div></div>
@@ -265,21 +307,41 @@ border-color:#000}.fill,.blip:after{background:#000!important}.gates{grid-templa
   <div class="diag"><div class="label">API latency</div><div id="latency" class="diag-value">-</div></div>
   <div class="diag"><div class="label">Free memory</div><div id="memory" class="diag-value">-</div></div>
  </div>
- <div class="settings">
-  <label>Smoothing<select id="smoothSetting"><option value="0">Raw</option>
-  <option value=".25">Responsive</option><option value=".12">Smooth</option></select></label>
-  <label>Radar range<select id="rangeSetting"><option value="609.6">20 ft</option>
-  <option value="304.8">10 ft</option><option value="914.4">30 ft</option></select></label>
-  <label>History window<select id="historyWindow"><option value="60000">1 minute</option>
-  <option value="3600000">1 hour</option><option value="86400000">24 hours</option></select></label>
-  <button onclick="clearHistory()">Clear history</button>
- </div>
 </section>
 <div class="footer">LD2410 range/presence dashboard · live JSON updates</div>
 </main>
+<div id="settingsModal" class="modal" hidden onclick="modalBackdrop(event)">
+ <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+  <div class="modal-head"><h2 id="settingsTitle">Dashboard Settings</h2>
+   <button class="close" type="button" aria-label="Close settings" onclick="closeSettings()">×</button>
+  </div>
+  <div class="settings">
+   <label>Smoothing<select id="smoothSetting"><option value="0">Raw</option>
+   <option value=".25">Responsive</option><option value=".12">Smooth</option></select></label>
+   <label>Radar range<select id="rangeSetting"><option value="609.6">20 ft</option>
+   <option value="304.8">10 ft</option><option value="914.4">30 ft</option></select></label>
+   <label>History window<select id="historyWindow"><option value="60000">1 minute</option>
+   <option value="3600000">1 hour</option><option value="86400000">24 hours</option></select></label>
+  </div>
+  <div class="modal-actions">
+   <button onclick="clearHistory()">Clear history</button>
+   <button onclick="window.print()">Print dashboard</button>
+   <button onclick="resetPanelLayout()">Reset panel layout</button>
+  </div>
+ </section>
+</div>
 <script>
 "use strict";
 const $=id=>document.getElementById(id);
+function openSettings(){$("settingsModal").hidden=false;document.body.style.overflow="hidden";
+ $("settingsModal").querySelector(".close").focus()}
+function closeSettings(){$("settingsModal").hidden=true;document.body.style.overflow=""}
+function modalBackdrop(event){if(event.target===$("settingsModal"))closeSettings()}
+function resetPanelLayout(){localStorage.removeItem("ryancitoCollapsedPanels");
+ document.querySelectorAll(".panel").forEach(panel=>panel.classList.remove("collapsed"));
+ document.querySelectorAll(".panel>.title").forEach(title=>title.setAttribute("aria-expanded","true"));
+ closeSettings()}
+addEventListener("keydown",event=>{if(event.key==="Escape"&&!$("settingsModal").hidden)closeSettings()});
 const collapsedPanels=JSON.parse(localStorage.getItem("ryancitoCollapsedPanels")||"{}");
 document.querySelectorAll(".panel>.title").forEach(title=>{
  const panel=title.parentElement,key=title.textContent.trim();
@@ -388,6 +450,29 @@ function startStream(){
  source.onmessage=event=>{lastStreamMessage=Date.now();queueRender(decodeStream(JSON.parse(event.data)),0)};
  source.onerror=()=>{streamConnected=false;if(Date.now()-lastStreamMessage>3000)$("offline").style.display="block"};
 }
+function renderBle(result){
+ const list=$("bleList");list.replaceChildren();
+ if(!result.available){$("bleState").textContent="BLE is unavailable in this MicroPython build.";return}
+ $("bleState").textContent=result.scanning?"Passive scan in progress…":
+  result.devices.length+" recent advertiser"+(result.devices.length===1?"":"s");
+ for(const device of result.devices){
+  const row=document.createElement("div");row.className="ble-device";
+  const identity=document.createElement("div"),name=document.createElement("div"),address=document.createElement("div");
+  name.className="ble-name";name.textContent=device.name;address.className="ble-address";
+  address.textContent=device.address+(device.address_type?" · private/random":" · public");
+  identity.append(name,address);
+  const strength=document.createElement("div"),signal=document.createElement("div"),fill=document.createElement("i");
+  signal.className="signal";fill.style.width=Math.max(0,Math.min(100,(device.rssi+100)/65*100))+"%";
+  signal.append(fill);strength.append(signal);
+  const rssi=document.createElement("div");rssi.textContent=device.rssi+" dBm";
+  const age=document.createElement("div");age.textContent=device.age_ms<1500?"now":Math.round(device.age_ms/1000)+"s ago";
+  row.append(identity,strength,rssi,age);list.append(row);
+ }
+}
+async function updateBle(){
+ try{const response=await fetch("/api/ble?t="+Date.now(),{cache:"no-store"});
+  if(response.ok)renderBle(await response.json())}catch(error){}
+}
 function toggleKind(kind){
  if(kind==="move"){showMove=!showMove;$("moveToggle").classList.toggle("active",showMove)}
  else{showStill=!showStill;$("stillToggle").classList.toggle("active",showStill)}
@@ -446,7 +531,6 @@ function render(d,latency){
  if(elapsed>=1){$("fps").textContent=((d.frames-lastFrameCount)/elapsed).toFixed(1)+"/s";
  lastFrameCount=d.frames;lastFrameTime=now}
  $("frames").textContent=d.frames;$("errors").textContent=d.parse_errors;
- $("rssi").textContent=d.rssi==null?"AP mode":d.rssi+" dBm";$("latency").textContent=Math.round(latency)+" ms";
  $("rssi").textContent=d.rssi==null?"AP mode":d.rssi+" dBm";
  $("latency").textContent=latency===0?"LIVE":Math.round(latency)+" ms";
  $("memory").textContent=d.mem_free==null?"-":Math.round(d.mem_free/1024)+" KB";
@@ -473,6 +557,7 @@ for(let i=0;i<9;i++)$("recommendations").insertAdjacentHTML("beforeend",
  `<div class="recommendation"><b>G${i}</b>M -<br>S -</div>`);
 openHistoryDb();startStream();
 (function fallbackLoop(){if(!streamConnected)update();setTimeout(fallbackLoop,document.hidden?2000:500)})();
+updateBle();setInterval(updateBle,5000);
 addEventListener("resize",drawHistory);
 </script>
 </body>
@@ -484,6 +569,118 @@ def ticks_age(now, then):
     if not then:
         return 0
     return max(0, time.ticks_diff(now, then))
+
+def ble_address_text(address):
+    return ":".join("{:02X}".format(value) for value in address)
+
+
+def ble_name_from_payload(payload):
+    position = 0
+    while position + 1 < len(payload):
+        field_length = payload[position]
+        if not field_length:
+            break
+        end = position + field_length + 1
+        if end > len(payload):
+            break
+        field_type = payload[position + 1]
+        if field_type in (0x08, 0x09):
+            try:
+                return bytes(payload[position + 2:end]).decode("utf-8")
+            except Exception:
+                return "Named BLE device"
+        position = end
+    return ""
+
+
+def ble_irq(event, data):
+    global ble_scanning, ble_last_scan
+    # MicroPython ESP32 BLE IRQ values: 5=scan result, 6=scan complete.
+    if event == 5:
+        address_type, address, advertisement_type, rssi, payload = data
+        address_copy = bytes(address)
+        key = ble_address_text(address_copy)
+        existing = ble_devices.get(key)
+        name = ble_name_from_payload(payload)
+        if existing:
+            existing["rssi"] = rssi
+            existing["last_seen"] = time.ticks_ms()
+            existing["seen"] += 1
+            if name:
+                existing["name"] = name
+        elif len(ble_devices) < BLE_MAX_DEVICES:
+            ble_devices[key] = {
+                "address": key,
+                "address_type": address_type,
+                "name": name,
+                "rssi": rssi,
+                "last_seen": time.ticks_ms(),
+                "seen": 1,
+            }
+    elif event == 6:
+        ble_scanning = False
+        ble_last_scan = time.ticks_ms()
+
+
+def init_ble():
+    global ble
+    if bluetooth is None:
+        print("BLE module unavailable; proximity scanning disabled")
+        return
+    try:
+        ble = bluetooth.BLE()
+        ble.active(True)
+        ble.irq(ble_irq)
+        print("BLE proximity scanner ready")
+    except Exception as error:
+        ble = None
+        print("BLE initialization failed:", error)
+
+
+def service_ble():
+    global ble_scanning, ble_last_scan
+    if ble is None or ble_scanning:
+        return
+    now = time.ticks_ms()
+    if ble_last_scan and time.ticks_diff(now, ble_last_scan) < BLE_SCAN_INTERVAL_MS:
+        return
+    try:
+        # A brief passive scan limits contention with the Wi-Fi dashboard.
+        ble.gap_scan(BLE_SCAN_MS, 30000, 15000, False)
+        ble_scanning = True
+    except Exception as error:
+        ble_last_scan = now
+        print("BLE scan start failed:", error)
+
+
+def ble_status_json():
+    now = time.ticks_ms()
+    expired = []
+    devices = []
+    for key, device in ble_devices.items():
+        age = ticks_age(now, device["last_seen"])
+        if age > BLE_DEVICE_TTL_MS:
+            expired.append(key)
+            continue
+        devices.append({
+            "address": device["address"],
+            "address_type": device["address_type"],
+            "name": device["name"] or "Unknown advertiser",
+            "rssi": device["rssi"],
+            "age_ms": age,
+            "seen": device["seen"],
+        })
+    for key in expired:
+        try:
+            del ble_devices[key]
+        except Exception:
+            pass
+    devices.sort(key=lambda item: item["rssi"], reverse=True)
+    return json.dumps({
+        "available": ble is not None,
+        "scanning": ble_scanning,
+        "devices": devices,
+    })
 
 
 def connect_wifi():
@@ -764,6 +961,12 @@ def handle_client(client, ip, wlan, active_ssid, network_mode):
         )
         client.settimeout(0.08)
         return True
+    elif path == b"/api/ble":
+        send_response(
+            client,
+            ble_status_json(),
+            "application/json; charset=utf-8",
+        )
     elif path == b"/favicon.ico":
         send_response(client, b"", "image/x-icon", "204 No Content")
     else:
@@ -784,6 +987,7 @@ def run_server(wlan, ip, active_ssid, network_mode):
     stream_clients = []
     while True:
         service_sensor()
+        service_ble()
         client = None
         try:
             client, _ = server.accept()
@@ -841,6 +1045,7 @@ def main():
     print("Ryancito Presence Radar build:", BUILD_VERSION)
     wlan, _ap, ip, active_ssid, network_mode = connect_wifi()
     enable_engineering_mode()
+    init_ble()
     time.sleep_ms(400)
     run_server(wlan, ip, active_ssid, network_mode)
 
