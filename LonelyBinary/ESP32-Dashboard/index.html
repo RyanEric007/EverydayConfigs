@@ -1,0 +1,1097 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+    <meta name="theme-color" content="#05080d">
+    <title>PinPulse // ESP32-S3 Control Deck</title>
+    <style>
+        :root {
+            --bg: #05080d;
+            --panel: #0a1119;
+            --panel2: #0d1822;
+            --line: #183344;
+            --cyan: #28f7e2;
+            --green: #8dff79;
+            --pink: #ff3cac;
+            --amber: #ffd166;
+            --text: #d8f7f4;
+            --muted: #739a9c;
+            --danger: #ff5263;
+            --rgb: #ffffff
+        }
+
+        * {
+            box-sizing: border-box
+        }
+
+        html {
+            background: var(--bg);
+            color: var(--text);
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: radial-gradient(circle at 85% 0, #12303d88, transparent 31rem), linear-gradient(#00ffcc08 1px, transparent 1px), linear-gradient(90deg, #00ffcc08 1px, transparent 1px), var(--bg);
+            background-size: auto, 28px 28px, 28px 28px
+        }
+
+        body:before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background: linear-gradient(transparent 50%, #0003 50%);
+            background-size: 100% 4px;
+            opacity: .25;
+            z-index: 9
+        }
+
+        button,
+        input,
+        select {
+            font: inherit
+        }
+
+        .shell {
+            max-width: 1380px;
+            margin: auto;
+            padding: 22px
+        }
+
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 18px;
+            margin-bottom: 20px;
+            border-bottom: 1px solid var(--line);
+            padding-bottom: 16px
+        }
+
+        .brand {
+            display: flex;
+            gap: 14px;
+            align-items: center
+        }
+
+        .mark {
+            width: 48px;
+            height: 48px;
+            border: 1px solid var(--cyan);
+            display: grid;
+            place-items: center;
+            color: var(--cyan);
+            box-shadow: 0 0 24px #28f7e244;
+            clip-path: polygon(12% 0, 100% 0, 100% 88%, 88% 100%, 0 100%, 0 12%)
+        }
+
+        .mark:after {
+            content: "PP";
+            font-weight: 900;
+            font-size: 18px
+        }
+
+        .eyebrow {
+            color: var(--cyan);
+            font-size: 11px;
+            letter-spacing: .18em
+        }
+
+        .brand h1 {
+            font: 700 clamp(18px, 3vw, 28px)/1.1 inherit;
+            margin: 4px 0 0;
+            letter-spacing: -.04em
+        }
+
+        .online {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--green);
+            font-size: 12px
+        }
+
+        .dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: currentColor;
+            box-shadow: 0 0 13px currentColor;
+            animation: pulse 1.7s infinite
+        }
+
+        @keyframes pulse {
+            50% {
+                opacity: .35
+            }
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            gap: 14px
+        }
+
+        .card {
+            grid-column: span 4;
+            background: linear-gradient(145deg, #0d1822e8, #081018e8);
+            border: 1px solid var(--line);
+            padding: 17px;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 12px 40px #0005
+        }
+
+        .card:after {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 28px;
+            height: 2px;
+            background: var(--cyan);
+            box-shadow: 0 0 12px var(--cyan)
+        }
+
+        .wide {
+            grid-column: span 8
+        }
+
+        .full {
+            grid-column: 1/-1
+        }
+
+        .title {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px
+        }
+
+        .title h2 {
+            font-size: 12px;
+            letter-spacing: .13em;
+            margin: 0;
+            color: var(--cyan);
+            text-transform: uppercase
+        }
+
+        .tag {
+            border: 1px solid var(--line);
+            padding: 3px 7px;
+            color: var(--muted);
+            font-size: 10px
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px
+        }
+
+        .stat {
+            border-left: 1px solid var(--line);
+            padding-left: 11px
+        }
+
+        .stat b {
+            display: block;
+            font-size: clamp(17px, 2vw, 26px);
+            color: white;
+            margin-top: 6px
+        }
+
+        .stat span {
+            font-size: 10px;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: .08em
+        }
+
+        .meter {
+            height: 4px;
+            background: #17242c;
+            margin-top: 9px
+        }
+
+        .meter i {
+            display: block;
+            height: 100%;
+            width: 0;
+            background: var(--cyan);
+            box-shadow: 0 0 8px var(--cyan);
+            transition: width .4s
+        }
+
+        .color-layout {
+            display: grid;
+            grid-template-columns: 170px 1fr;
+            gap: 20px
+        }
+
+        .orb {
+            width: 160px;
+            aspect-ratio: 1;
+            border-radius: 50%;
+            background: var(--rgb);
+            box-shadow: 0 0 25px var(--rgb), 0 0 75px color-mix(in srgb, var(--rgb) 45%, transparent);
+            border: 10px solid #ffffff0d;
+            position: relative
+        }
+
+        .orb:after {
+            content: "";
+            position: absolute;
+            inset: 18%;
+            border: 1px solid #fff4;
+            border-radius: 50%
+        }
+
+        .picker {
+            position: absolute;
+            opacity: 0;
+            width: 1px;
+            height: 1px
+        }
+
+        .orb-label {
+            display: block;
+            cursor: pointer
+        }
+
+        .hex {
+            text-align: center;
+            color: white;
+            margin-top: 9px;
+            font-size: 14px
+        }
+
+        .slider {
+            display: grid;
+            grid-template-columns: 16px 1fr 38px;
+            align-items: center;
+            gap: 9px;
+            margin: 9px 0
+        }
+
+        .slider label {
+            font-weight: bold
+        }
+
+        .slider output {
+            text-align: right;
+            color: var(--muted)
+        }
+
+        input[type=range] {
+            width: 100%;
+            accent-color: var(--cyan)
+        }
+
+        .swatches {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 13px
+        }
+
+        .swatch {
+            width: 28px;
+            height: 28px;
+            border: 1px solid #ffffff44;
+            background: var(--c);
+            cursor: pointer;
+            box-shadow: 0 0 10px color-mix(in srgb, var(--c) 45%, transparent)
+        }
+
+        .actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap
+        }
+
+        .btn {
+            border: 1px solid var(--line);
+            background: #0b1720;
+            color: var(--text);
+            padding: 9px 12px;
+            cursor: pointer;
+            transition: .16s;
+            text-transform: uppercase;
+            font-size: 11px;
+            letter-spacing: .05em
+        }
+
+        .btn:hover {
+            border-color: var(--cyan);
+            color: var(--cyan);
+            box-shadow: inset 0 0 16px #28f7e211
+        }
+
+        .btn.primary {
+            background: var(--cyan);
+            color: #03110f;
+            border-color: var(--cyan);
+            font-weight: bold
+        }
+
+        .btn.danger {
+            color: var(--danger);
+            border-color: #ff526355
+        }
+
+        .btn.active {
+            color: #04100c;
+            background: var(--green);
+            border-color: var(--green)
+        }
+
+        .gpio-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+            gap: 7px
+        }
+
+        .pin {
+            padding: 9px 4px;
+            text-align: center;
+            border: 1px solid var(--line);
+            background: #09121a;
+            color: var(--muted);
+            cursor: pointer
+        }
+
+        .pin.high {
+            color: #05110d;
+            background: var(--green);
+            border-color: var(--green);
+            box-shadow: 0 0 13px #8dff7944
+        }
+
+        .pin:hover {
+            border-color: var(--green)
+        }
+
+        .pin.locked {
+            cursor: not-allowed;
+            color: #60717a;
+            border-style: dashed;
+            background: #070d12;
+            opacity: .62
+        }
+
+        .pin.locked:after {
+            content: " LOCK";
+            display: block;
+            font-size: 7px;
+            margin-top: 3px
+        }
+
+        .pin.hard-locked {
+            border-color: #ff526355;
+            color: #8b5960
+        }
+
+        .hint {
+            color: var(--muted);
+            font-size: 11px;
+            line-height: 1.5;
+            margin-top: 10px
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px
+        }
+
+        th {
+            text-align: left;
+            color: var(--muted);
+            font-size: 10px;
+            letter-spacing: .08em;
+            padding: 8px;
+            border-bottom: 1px solid var(--line)
+        }
+
+        td {
+            padding: 9px 8px;
+            border-bottom: 1px solid #18334477
+        }
+
+        .bars {
+            width: 80px;
+            height: 5px;
+            background: #16252d
+        }
+
+        .bars i {
+            height: 100%;
+            display: block;
+            background: var(--green)
+        }
+
+        .console {
+            height: 170px;
+            overflow: auto;
+            background: #03070a;
+            border: 1px solid var(--line);
+            padding: 12px;
+            font-size: 11px;
+            line-height: 1.7
+        }
+
+        .console div:before {
+            content: "> ";
+            color: var(--cyan)
+        }
+
+        .console .err {
+            color: var(--danger)
+        }
+
+        .console .ok {
+            color: var(--green)
+        }
+
+        .toast {
+            position: fixed;
+            right: 18px;
+            bottom: 18px;
+            background: #0c1922;
+            border: 1px solid var(--cyan);
+            padding: 11px 15px;
+            color: var(--cyan);
+            transform: translateY(90px);
+            opacity: 0;
+            transition: .25s;
+            z-index: 20
+        }
+
+        .toast.show {
+            transform: none;
+            opacity: 1
+        }
+
+        .muted {
+            color: var(--muted)
+        }
+
+        .top-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px
+        }
+
+        .icon-btn {
+            width: 38px;
+            height: 38px;
+            padding: 0;
+            border: 1px solid var(--cyan);
+            background: #0b1720;
+            color: var(--cyan);
+            cursor: pointer;
+            font-size: 18px
+        }
+
+        .backdrop {
+            position: fixed;
+            inset: 0;
+            background: #000a;
+            opacity: 0;
+            pointer-events: none;
+            transition: .2s;
+            z-index: 30
+        }
+
+        .drawer {
+            position: fixed;
+            top: 0;
+            right: 0;
+            width: min(420px, 92vw);
+            height: 100vh;
+            overflow: auto;
+            padding: 22px;
+            background: linear-gradient(145deg, #0d1822, #05080d);
+            border-left: 1px solid var(--cyan);
+            transform: translateX(105%);
+            transition: .24s;
+            z-index: 31;
+            box-shadow: -20px 0 60px #000a
+        }
+
+        body.drawer-open .backdrop {
+            opacity: 1;
+            pointer-events: auto
+        }
+
+        body.drawer-open .drawer {
+            transform: none
+        }
+
+        .drawer-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--line);
+            padding-bottom: 14px;
+            margin-bottom: 18px
+        }
+
+        .drawer h2,
+        .drawer h3 {
+            color: var(--cyan);
+            text-transform: uppercase;
+            letter-spacing: .1em
+        }
+
+        .drawer h2 {
+            margin: 0;
+            font-size: 15px
+        }
+
+        .drawer h3 {
+            font-size: 11px;
+            margin-top: 24px
+        }
+
+        .drawer label {
+            display: block;
+            color: var(--muted);
+            font-size: 11px;
+            margin: 12px 0
+        }
+
+        .drawer select,
+        .drawer input[type=file] {
+            width: 100%;
+            margin-top: 7px;
+            padding: 8px;
+            color: var(--text);
+            background: #071018;
+            border: 1px solid var(--line)
+        }
+
+        .drawer details {
+            border: 1px solid var(--line);
+            padding: 10px;
+            margin: 8px 0;
+            color: var(--muted);
+            line-height: 1.55
+        }
+
+        .drawer summary {
+            color: var(--text);
+            cursor: pointer
+        }
+
+        .drawer a {
+            color: var(--cyan)
+        }
+
+        .identity-list {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px
+        }
+
+        .identity-row {
+            border-left: 1px solid var(--line);
+            padding-left: 11px
+        }
+
+        .identity-row span {
+            display: block;
+            color: var(--muted);
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: .08em
+        }
+
+        .identity-row b {
+            display: block;
+            color: white;
+            margin-top: 4px;
+            overflow-wrap: anywhere
+        }
+
+        .identity-row:first-child {
+            grid-column: 1/-1
+        }
+
+        .vendor {
+            color: var(--amber)
+        }
+
+        @page {
+            size: landscape;
+            margin: 10mm
+        }
+
+        @media print {
+            body {
+                background: #fff !important;
+                color: #111 !important
+            }
+
+            body:before,
+            .top-actions,
+            .actions,
+            .console,
+            .backdrop,
+            .drawer,
+            .toast {
+                display: none !important
+            }
+
+            .shell {
+                max-width: none;
+                padding: 0
+            }
+
+            .card {
+                break-inside: avoid;
+                box-shadow: none;
+                background: #fff;
+                color: #111;
+                border-color: #777;
+                filter: grayscale(1)
+            }
+
+            .card * {
+                text-shadow: none !important
+            }
+
+            .title h2,
+            .stat b,
+            td {
+                color: #111 !important
+            }
+
+            .muted,
+            .hint,
+            th,
+            .stat span {
+                color: #444 !important
+            }
+
+            .rgb-card {
+                grid-column: 1/-1;
+                filter: none;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact
+            }
+
+            .rgb-card .orb,
+            .rgb-card .swatch,
+            .rgb-card input {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact
+            }
+
+            .rgb-card .color-layout {
+                grid-template-columns: 180px minmax(0, 1fr);
+                align-items: center
+            }
+
+            .rgb-card .orb {
+                width: 160px;
+                background: var(--rgb) !important;
+                box-shadow: 0 0 25px color-mix(in srgb, var(--rgb) 70%, #777), 0 0 55px color-mix(in srgb, var(--rgb) 35%, transparent) !important
+            }
+
+            .rgb-card .slider:first-child label {
+                color: #ff5263 !important
+            }
+
+            .rgb-card .slider:nth-child(2) label {
+                color: #33a852 !important
+            }
+
+            .rgb-card .slider:nth-child(3) label {
+                color: #2877cc !important
+            }
+
+            .rgb-card .slider:nth-child(4) label {
+                color: #b88700 !important
+            }
+        }
+
+        @media(max-width:900px) {
+
+            .card,
+            .wide {
+                grid-column: 1/-1
+            }
+
+            .stats {
+                grid-template-columns: repeat(2, 1fr)
+            }
+        }
+
+        @media(max-width:560px) {
+            .shell {
+                padding: 13px
+            }
+
+            .topbar {
+                align-items: flex-start
+            }
+
+            .online {
+                margin-top: 5px
+            }
+
+            .color-layout {
+                grid-template-columns: 1fr
+            }
+
+            .orb-label {
+                margin: auto
+            }
+
+            .stats {
+                grid-template-columns: 1fr 1fr
+            }
+
+            .card {
+                padding: 14px
+            }
+
+            .identity-list {
+                grid-template-columns: 1fr
+            }
+
+            .identity-row:first-child {
+                grid-column: auto
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <main class="shell">
+        <header class="topbar">
+            <div class="brand">
+                <div class="mark"></div>
+                <div>
+                    <div class="eyebrow">LOCAL HARDWARE INTERFACE</div>
+                    <h1>PINPULSE // CONTROL DECK</h1>
+                </div>
+            </div>
+            <div class="top-actions">
+                <div class="online"><i class="dot"></i><span id="link">LINK ACTIVE</span></div><button class="icon-btn"
+                    id="settingsButton" aria-label="Settings and help" title="Settings and help">⚙</button>
+            </div>
+        </header>
+        <section class="grid">
+            <article class="card full">
+                <div class="title">
+                    <h2>System telemetry</h2><span class="tag" id="uptime">SYNCING</span>
+                </div>
+                <div class="stats">
+                    <div class="stat"><span>CPU clock</span><b id="cpu">--</b>
+                        <div class="meter"><i id="cpuBar"></i></div>
+                    </div>
+                    <div class="stat"><span>Heap free</span><b id="heap">--</b>
+                        <div class="meter"><i id="heapBar"></i></div>
+                    </div>
+                    <div class="stat"><span>Flash free</span><b id="flash">--</b>
+                        <div class="meter"><i id="flashBar"></i></div>
+                    </div>
+                    <div class="stat"><span>Wi-Fi signal</span><b id="signal">--</b>
+                        <div class="meter"><i id="signalBar"></i></div>
+                    </div>
+                </div>
+            </article>
+
+            <article class="card wide rgb-card">
+                <div class="title">
+                    <h2>RGB spectrum control</h2><span class="tag">GPIO 48</span>
+                </div>
+                <div class="color-layout">
+                    <div><label class="orb-label" for="picker">
+                            <div class="orb" id="orb"></div>
+                        </label><input class="picker" type="color" id="picker" value="#ffffff">
+                        <div class="hex" id="hex">#FFFFFF</div>
+                    </div>
+                    <div>
+                        <div class="slider"><label style="color:#ff5263">R</label><input id="r" type="range" min="0"
+                                max="255" value="255"><output id="ro">255</output></div>
+                        <div class="slider"><label style="color:#8dff79">G</label><input id="g" type="range" min="0"
+                                max="255" value="255"><output id="go">255</output></div>
+                        <div class="slider"><label style="color:#54a7ff">B</label><input id="b" type="range" min="0"
+                                max="255" value="255"><output id="bo">255</output></div>
+                        <div class="slider"><label style="color:#ffd166">☀</label><input id="brightness" type="range"
+                                min="0" max="100" value="100" aria-label="RGB brightness"><output
+                                id="brightnessValue">100%</output></div>
+                        <div class="swatches"><button class="swatch" style="--c:#ff0000" data-c="#ff0000"
+                                aria-label="Red"></button><button class="swatch" style="--c:#00ff00" data-c="#00ff00"
+                                aria-label="Green"></button><button class="swatch" style="--c:#0066ff" data-c="#0066ff"
+                                aria-label="Blue"></button><button class="swatch" style="--c:#ff3cac" data-c="#ff3cac"
+                                aria-label="Pink"></button><button class="swatch" style="--c:#00ffff" data-c="#00ffff"
+                                aria-label="Cyan"></button><button class="swatch" style="--c:#ff9d00" data-c="#ff9d00"
+                                aria-label="Amber"></button><button class="swatch" style="--c:#ffffff" data-c="#ffffff"
+                                aria-label="White"></button></div>
+                        <div class="actions" style="margin-top:14px"><button class="btn primary" id="applyColor">Apply
+                                color</button><button class="btn" id="rgbOff">RGB off</button></div>
+                    </div>
+                </div>
+            </article>
+
+            <article class="card">
+                <div class="title">
+                    <h2>Board controls</h2><span class="tag">SAFE GPIO SET</span>
+                </div>
+                <p class="muted">All PinPulse indicator lights</p>
+                <div class="actions"><button class="btn" id="ledOn">All LEDs on</button><button class="btn"
+                        id="ledOff">All LEDs off</button></div>
+                <p class="muted" style="margin-top:22px">CPU governor</p>
+                <div class="actions"><button class="btn" id="cpu160">160 MHz</button><button class="btn" id="cpu240">240
+                        MHz</button><button class="btn" id="collect">Collect memory</button></div>
+                <p class="hint">The all-LED controls drive only the allow-listed GPIO matrix. RGB remains independent.
+                </p>
+            </article>
+
+            <article class="card wide">
+                <div class="title">
+                    <h2>PinPulse GPIO matrix</h2><span class="tag">CLICK TO TOGGLE</span>
+                </div>
+                <div class="gpio-grid" id="pins"></div>
+                <p class="hint">GPIO 0–48 are shown. Only the board-verified allowlist can be toggled; unverified pins
+                    stay locked to protect boot, USB, flash/PSRAM, UART, and onboard hardware. A lit safe tile is
+                    currently HIGH.</p>
+            </article>
+            <article class="card">
+                <div class="title">
+                    <h2>Network identity</h2><span class="tag" id="wifiQuality">--</span>
+                </div>
+                <div class="identity-list">
+                    <div class="identity-row"><span>SSID</span><b id="ssid">--</b></div>
+                    <div class="identity-row"><span>IPv4 · subnet</span><b id="ip">--</b><small id="subnet"
+                            class="muted">--</small></div>
+                    <div class="identity-row"><span>Interface MAC</span><b id="stationMac">--</b></div>
+                    <div class="identity-row"><span>Channel · signal</span><b id="networkRadio">--</b></div>
+                    <div class="identity-row"><span>Gateway · DNS</span><b id="gateway">--</b><small id="dns"
+                            class="muted">--</small></div>
+                </div>
+            </article>
+
+            <article class="card full">
+                <div class="title">
+                    <h2>Wireless spectrum</h2><span class="tag" id="networkCount">NOT SCANNED</span>
+                </div>
+                <div class="actions" style="margin-bottom:14px"><button class="btn" id="scan">Scan networks</button>
+                </div>
+                <div style="overflow:auto">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>SSID</th>
+                                <th>BSSID</th>
+                                <th>Signal</th>
+                                <th>Quality</th>
+                                <th>Security</th>
+                                <th>Channel</th>
+                                <th>OUI vendor</th>
+                            </tr>
+                        </thead>
+                        <tbody id="networks">
+                            <tr>
+                                <td colspan="7" class="muted">Run a scan to inspect nearby 2.4 GHz networks.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </article>
+            <article class="card full">
+                <div class="title">
+                    <h2>Bluetooth spectrum</h2><span class="tag" id="bluetoothCount">NOT SCANNED</span>
+                </div>
+                <div class="actions" style="margin-bottom:14px"><button class="btn" id="bleScan">Scan from
+                        ESP32</button></div>
+                <div style="overflow:auto">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Device</th>
+                                <th>Signal</th>
+                                <th>Quality</th>
+                                <th>Address</th>
+                                <th>Address type</th>
+                                <th>OUI vendor</th>
+                                <th>Mode</th>
+                            </tr>
+                        </thead>
+                        <tbody id="bluetooth">
+                            <tr>
+                                <td colspan="7" class="muted">Use the ESP32 scan to inspect nearby BLE advertisements.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="hint" id="ouiHint">OUI lookup identifies public hardware prefixes only. Randomized or locally
+                    administered BLE addresses cannot be reliably attributed.</p>
+            </article>
+            <article class="card full">
+                <div class="title">
+                    <h2>Event stream</h2><span class="tag">LIVE</span>
+                </div>
+                <div class="console" id="console">
+                    <div class="ok">Dashboard initialized.</div>
+                </div>
+            </article>
+        </section>
+    </main>
+    <div class="backdrop" id="backdrop"></div>
+    <aside class="drawer" id="settings" aria-label="Settings and help">
+        <div class="drawer-head">
+            <h2>Configuration</h2><button class="icon-btn" id="closeSettings" aria-label="Close">×</button>
+        </div>
+        <h3>Report / PDF</h3>
+        <label>Page orientation<select id="printOrientation">
+                <option value="landscape">Landscape</option>
+                <option value="portrait">Portrait</option>
+            </select></label>
+        <div class="actions"><button class="btn primary" id="printReport">Print / Save PDF</button></div>
+        <h3>MAC identification</h3>
+        <p class="hint">The vendor data comes from the IEEE Registration Authority’s public MA-L listing. Download the
+            official <a href="https://standards-oui.ieee.org/oui/oui.csv" target="_blank" rel="noopener">IEEE
+                oui.csv</a>, save it as <code>oui.csv</code>, then import it here. You can also use a simple
+            <code>OUI,Vendor</code> CSV. The database is saved in this browser and reloads automatically.</p>
+        <div class="actions"><button class="btn" id="drawerImportOui">Import OUI.csv</button><button class="btn danger"
+                id="clearOui">Clear OUI</button><input id="ouiFile" type="file" accept=".csv,text/csv,.txt,text/plain"
+                hidden></div>
+        <p class="hint" id="ouiStatus">No OUI database loaded.</p>
+        <h3>Browser data</h3>
+        <div class="actions"><button class="btn danger" id="resetBrowserData">Reset browser data</button></div>
+        <p class="hint">Clears the saved OUI database and dashboard browser settings. It does not reset or erase the
+            ESP32.</p>
+        <h3>Board</h3>
+        <div class="actions"><button class="btn danger" id="gpioUnlock">Expert GPIO unlock</button><button
+                class="btn danger" id="resetBoard">Restart board</button></div>
+        <p class="hint" id="gpioUnlockStatus">Unverified GPIOs are locked. Expert unlock is temporary and resets when
+            the board restarts. Critical USB, flash/PSRAM, and RGB pins always remain locked.</p>
+        <h3>Help</h3>
+        <details open>
+            <summary>GPIO Safe mode and Expert mode</summary>
+            <p><strong>Safe mode</strong> is the default. Only the configured board allowlist can be toggled. Every
+                other GPIO is displayed as locked, and the Python API rejects requests for it.</p>
+            <p><strong>Expert mode</strong> temporarily unlocks GPIO0, GPIO43, and GPIO44 until you relock them or
+                restart the board. GPIO0 is sampled during reset to select the boot mode. GPIO43 and GPIO44 are normally
+                UART0 TX and RX, so using them may interrupt serial logs, the REPL, or UART firmware uploads.</p>
+            <p>Critical pins remain locked in both modes: GPIO19–20 are normally USB; GPIO22–25 do not exist on the
+                ESP32-S3; GPIO26–37 may be connected to flash or PSRAM; GPIO45–46 are strapping pins; and GPIO48 is
+                reserved for the onboard RGB LED.</p>
+            <p>Expert unlock is permission—not electrical verification. Confirm every pin against the exact PinPulse
+                board and module schematic before connecting hardware or driving an output.</p>
+        </details>
+        <details open>
+            <summary>Wireless spectrum</summary>
+            <p>Run the Wi-Fi scan from the Wireless Spectrum card. RSSI values closer to zero are stronger. Results
+                include BSSID, channel, security, quality, and OUI vendor when available.</p>
+        </details>
+        <details>
+            <summary>Bluetooth and OUI</summary>
+            <p>The ESP32 scans passive BLE advertisements. Public addresses may match the imported IEEE database.
+                Random/private BLE addresses often rotate and should not be treated as a stable identity.</p>
+            <p><a href="https://standards.ieee.org/products-programs/regauth/oui/" target="_blank" rel="noopener">About
+                    IEEE MA-L/OUI assignments</a></p>
+        </details>
+        <details>
+            <summary>Network identity</summary>
+            <p>This card describes the ESP32 station connection: SSID, IP, subnet, interface MAC, channel, RSSI quality,
+                gateway, and DNS.</p>
+        </details>
+        <details>
+            <summary>PDF reports</summary>
+            <p>Choose an orientation and select Print / Save PDF. In the browser print dialog, choose Save as PDF.</p>
+        </details>
+    </aside>
+    <div class="toast" id="toast"></div>
+    <script>
+        const $ = s => document.querySelector(s), pins = Array.from({ length: 49 }, (_, pin) => pin), ouiVendors = new Map();
+        let safePins = new Set(), hardBlockedPins = new Set(), expertUnlocked = false;
+        function log(msg, type = '') { const d = document.createElement('div'); d.textContent = new Date().toLocaleTimeString() + '  ' + msg; d.className = type; $('#console').prepend(d) }
+        function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 1800) }
+        async function api(path, body) { try { const o = { method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json' } }; if (body) o.body = JSON.stringify(body); const r = await fetch(path, o), j = await r.json(); if (!r.ok || j.ok === false) throw Error(j.error || 'Request failed'); return j } catch (e) { log(e.message, 'err'); toast(e.message); throw e } }
+        function bytes(n) { const u = ['B', 'KB', 'MB', 'GB']; let i = 0; while (n >= 1024 && i < 3) { n /= 1024; i++ } return n.toFixed(i ? 1 : 0) + ' ' + u[i] }
+        function pct(id, v) { $(id).style.width = Math.max(3, Math.min(100, v)) + '%' }
+        function normalizeOui(value) { return String(value || '').replace(/[^0-9a-f]/gi, '').slice(0, 6).toUpperCase() }
+        function ouiInfo(mac, addressType) { if (addressType !== undefined && ![0, 2].includes(Number(addressType))) return 'Random/private address'; const compact = String(mac || '').replace(/[^0-9a-f]/gi, ''); const first = parseInt(compact.slice(0, 2), 16); if (Number.isFinite(first) && (first & 2)) return 'Locally administered'; return ouiVendors.get(normalizeOui(mac)) || 'Unknown' }
+        const OUI_DB_NAME = 'ESP32DashboardVendors', OUI_DB_VERSION = 1;
+        function openOuiDatabase() { return new Promise((resolve, reject) => { if (!window.indexedDB) { reject(Error('IndexedDB is unavailable')); return } const request = indexedDB.open(OUI_DB_NAME, OUI_DB_VERSION); request.onupgradeneeded = () => { const db = request.result; if (!db.objectStoreNames.contains('oui')) db.createObjectStore('oui', { keyPath: 'prefix' }) }; request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error || Error('Could not open OUI database')) }) }
+        async function saveOuiDatabase() { const db = await openOuiDatabase(); await new Promise((resolve, reject) => { const transaction = db.transaction('oui', 'readwrite'), store = transaction.objectStore('oui'); store.clear(); for (const [prefix, vendor] of ouiVendors) store.put({ prefix, vendor }); transaction.oncomplete = resolve; transaction.onerror = () => reject(transaction.error); transaction.onabort = () => reject(transaction.error) }); db.close() }
+        async function loadOuiDatabase() { try { const db = await openOuiDatabase(), records = await new Promise((resolve, reject) => { const request = db.transaction('oui').objectStore('oui').getAll(); request.onsuccess = () => resolve(request.result || []); request.onerror = () => reject(request.error) }); db.close(); ouiVendors.clear(); records.forEach(record => ouiVendors.set(record.prefix, record.vendor)); if (ouiVendors.size) { $('#ouiStatus').textContent = ouiVendors.size.toLocaleString() + ' saved OUI records loaded.'; $('#ouiHint').textContent = $('#ouiStatus').textContent; log('Loaded ' + ouiVendors.size.toLocaleString() + ' saved OUI records', 'ok') } } catch (error) { $('#ouiStatus').textContent = 'OUI persistence unavailable; imports will last for this page only.' } }
+        async function deleteOuiDatabase() { ouiVendors.clear(); await new Promise((resolve, reject) => { const request = indexedDB.deleteDatabase(OUI_DB_NAME); request.onsuccess = resolve; request.onerror = () => reject(request.error); request.onblocked = () => reject(Error('Close other dashboard tabs and try again')) }) }
+        function csvRow(line) { const out = []; let field = '', quoted = false; for (let i = 0; i < line.length; i++) { const c = line[i]; if (c === '"' && quoted && line[i + 1] === '"') { field += '"'; i++ } else if (c === '"') quoted = !quoted; else if (c === ',' && !quoted) { out.push(field.trim()); field = '' } else field += c } out.push(field.trim()); return out }
+        async function importOui(file) { const lines = (await file.text()).split(/\r?\n/).filter(Boolean); if (!lines.length) throw Error('The selected file is empty'); const header = csvRow(lines[0]).map(x => x.toLowerCase()); let pi = header.findIndex(x => x === 'assignment' || x === 'oui' || x.includes('prefix')), vi = header.findIndex(x => x.includes('organization name') || x === 'vendor' || x === 'organization'), start = 1; if (pi < 0 || vi < 0) { pi = 0; vi = 1; start = 0 } ouiVendors.clear(); for (let i = start; i < lines.length; i++) { const fields = csvRow(lines[i]), prefix = normalizeOui(fields[pi]), vendor = (fields[vi] || '').trim(); if (prefix.length === 6 && vendor) ouiVendors.set(prefix, vendor) } if (!ouiVendors.size) throw Error('No valid OUI and vendor rows found'); $('#ouiStatus').textContent = 'Saving ' + ouiVendors.size.toLocaleString() + ' OUI records…'; await saveOuiDatabase(); $('#ouiStatus').textContent = ouiVendors.size.toLocaleString() + ' OUI records saved in this browser.'; $('#ouiHint').textContent = $('#ouiStatus').textContent; toast('OUI DATABASE SAVED'); log('Imported and saved ' + ouiVendors.size.toLocaleString() + ' OUI records', 'ok') }
+        function updatePinStates(states) { Object.keys(states || {}).forEach(pin => { const tile = document.querySelector('[data-pin="' + pin + '"]'); if (tile && !tile.dataset.pending) tile.classList.toggle('high', states[pin] === 1) }) }
+        function updatePinSafety(allowed, hardBlocked, unlocked) { safePins = new Set((allowed || []).map(Number)); hardBlockedPins = new Set((hardBlocked || []).map(Number)); expertUnlocked = !!unlocked; document.querySelectorAll('.pin').forEach(tile => { const pin = Number(tile.dataset.pin), safe = safePins.has(pin), hard = hardBlockedPins.has(pin); tile.classList.toggle('locked', !safe); tile.classList.toggle('hard-locked', hard); tile.setAttribute('aria-disabled', String(!safe)); tile.title = safe ? (expertUnlocked && [0, 43, 44].includes(pin) ? 'Expert-unlocked GPIO; click to toggle' : 'Verified dashboard GPIO; click to toggle') : hard ? 'Critical pin: always locked' : 'Locked: enable Expert GPIO unlock in Configuration' }); const button = $('#gpioUnlock'); if (button) button.textContent = expertUnlocked ? 'Lock expert GPIOs' : 'Expert GPIO unlock'; const note = $('#gpioUnlockStatus'); if (note) note.textContent = expertUnlocked ? 'Expert mode active for this boot. GPIO 0, 43, and 44 are unlocked; critical pins remain locked.' : 'Unverified GPIOs are locked. Expert unlock is temporary and resets when the board restarts. Critical USB, flash/PSRAM, and RGB pins always remain locked.' }
+        async function status() { try { const s = await api('/api/status'); $('#cpu').textContent = s.cpu_mhz + ' MHz'; $('#heap').textContent = bytes(s.heap_free); $('#flash').textContent = bytes(s.flash_free); $('#signal').textContent = s.rssi === null ? 'OFFLINE' : s.rssi + ' dBm'; $('#uptime').textContent = s.uptime; $('#ssid').textContent = s.ssid || 'Unavailable'; $('#ip').textContent = s.ip || 'OFFLINE'; $('#subnet').textContent = s.subnet || '--'; $('#stationMac').textContent = s.mac || '--'; $('#networkRadio').textContent = s.channel == null ? s.quality : 'CH ' + s.channel + ' · ' + s.quality + (s.rssi == null ? '' : ' · ' + s.rssi + ' dBm'); $('#gateway').textContent = s.gateway || '--'; $('#dns').textContent = s.dns || '--'; $('#wifiQuality').textContent = s.quality; $('#link').textContent = 'LINK ACTIVE'; pct('#cpuBar', s.cpu_mhz / 2.4); pct('#heapBar', s.heap_free * 100 / s.heap_total); pct('#flashBar', s.flash_free * 100 / s.flash_total); pct('#signalBar', s.rssi === null ? 0 : Math.max(0, 2 * (s.rssi + 100))); if (s.rgb) { setColor(s.rgb[0], s.rgb[1], s.rgb[2], false) } if (s.brightness !== undefined) setBrightness(s.brightness); updatePinSafety(s.allowed_gpio_pins, s.hard_blocked_gpio_pins, s.unsafe_gpio_unlocked); updatePinStates(s.gpio) } catch (e) { $('#link').textContent = 'LINK LOST' } }
+        function hex2(n) { return Number(n).toString(16).padStart(2, '0') }
+        function setColor(r, g, b, send = false) { r = +r; g = +g; b = +b; $('#r').value = r; $('#g').value = g; $('#b').value = b; $('#ro').value = r; $('#go').value = g; $('#bo').value = b; const h = '#' + hex2(r) + hex2(g) + hex2(b); $('#hex').textContent = h.toUpperCase(); $('#picker').value = h; document.documentElement.style.setProperty('--rgb', h); if (send) applyColor() }
+        function fromHex(h) { setColor(parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)) }
+        function setBrightness(value) { value = Math.max(0, Math.min(100, +value)); $('#brightness').value = value; $('#brightnessValue').value = value + '%'; const opacity = .18 + .82 * value / 100; $('#orb').style.opacity = opacity; $('#orb').style.filter = 'brightness(' + (0.35 + value / 100) + ')' }
+        async function applyColor() { const c = [+$('#r').value, +$('#g').value, +$('#b').value], brightness = +$('#brightness').value; await api('/api/rgb', { r: c[0], g: c[1], b: c[2], brightness }); log('RGB set to ' + c.join(', ') + ' at ' + brightness + '%', 'ok'); toast('RGB UPDATED') }
+        ['r', 'g', 'b'].forEach(x => $('#' + x).addEventListener('input', () => setColor($('#r').value, $('#g').value, $('#b').value))); $('#picker').oninput = e => fromHex(e.target.value); document.querySelectorAll('.swatch').forEach(x => x.onclick = () => fromHex(x.dataset.c)); $('#applyColor').onclick = applyColor;
+        $('#brightness').oninput = e => setBrightness(e.target.value);
+        $('#rgbOff').onclick = async () => { await api('/api/rgb', { r: 0, g: 0, b: 0, brightness: +$('#brightness').value }); setColor(0, 0, 0); log('RGB switched off', 'ok') };
+        function showAllPins(high) { document.querySelectorAll('.pin').forEach(x => { if (safePins.has(Number(x.dataset.pin))) x.classList.toggle('high', high) }) }
+        $('#ledOn').onclick = async () => { await api('/api/led', { on: true }); showAllPins(true); log('All safe PinPulse LEDs on', 'ok') }; $('#ledOff').onclick = async () => { await api('/api/led', { on: false }); showAllPins(false); log('All safe PinPulse LEDs off', 'ok') };
+        $('#cpu160').onclick = () => api('/api/cpu', { mhz: 160 }).then(() => { log('CPU set to 160 MHz', 'ok'); status() }); $('#cpu240').onclick = () => api('/api/cpu', { mhz: 240 }).then(() => { log('CPU set to 240 MHz', 'ok'); status() }); $('#collect').onclick = () => api('/api/gc', {}).then(x => { log('Garbage collector reclaimed ' + bytes(x.reclaimed), 'ok'); status() });
+        const pg = $('#pins');
+        pins.forEach(pinNumber => {
+            const button = document.createElement('button');
+            button.className = 'pin';
+            button.textContent = 'IO' + pinNumber;
+            button.dataset.pin = pinNumber;
+            button.classList.add('locked');
+            button.title = 'Waiting for board safety verification';
+            button.onclick = async () => {
+                if (!safePins.has(pinNumber)) {
+                    toast('GPIO' + pinNumber + ' IS LOCKED');
+                    log('GPIO' + pinNumber + ' blocked: pin is not verified safe', 'err');
+                    return;
+                }
+                const previousState = button.classList.contains('high');
+                const newState = !previousState;
+                button.classList.toggle('high', newState);
+                button.disabled = true;
+                button.dataset.pending = '1';
+                try {
+                    await api('/api/gpio', {
+                        pin: pinNumber,
+                        value: newState ? 1 : 0
+                    });
+                    log('GPIO' + pinNumber + ' → ' + (newState ? 'HIGH' : 'LOW'), 'ok');
+                } catch (error) {
+                    button.classList.toggle('high', previousState);
+                } finally {
+                    delete button.dataset.pending;
+                    button.disabled = false;
+                }
+            };
+            pg.appendChild(button);
+        });
+        $('#scan').onclick = async () => { log('Scanning wireless spectrum...'); const x = await api('/api/wifi/scan'), tb = $('#networks'); tb.innerHTML = ''; x.networks.sort((a, b) => b.rssi - a.rssi).forEach(n => { const tr = document.createElement('tr'), strength = Math.max(4, Math.min(100, 2 * (n.rssi + 100))); tr.innerHTML = '<td></td><td></td><td><div class="bars"><i style="width:' + strength + '%"></i></div></td><td></td><td></td><td></td><td class="vendor"></td>'; tr.children[0].textContent = n.ssid; tr.children[1].textContent = n.bssid; tr.children[3].textContent = n.quality + ' (' + n.rssi + ')'; tr.children[4].textContent = n.security; tr.children[5].textContent = n.channel; tr.children[6].textContent = ouiInfo(n.bssid); tb.appendChild(tr) }); $('#networkCount').textContent = x.networks.length + ' DETECTED'; log('Scan complete: ' + x.networks.length + ' networks', 'ok') };
+        function radioQuality(rssi) { return rssi >= -50 ? 'Excellent' : rssi >= -60 ? 'Good' : rssi >= -70 ? 'Fair' : rssi >= -80 ? 'Weak' : 'Very weak' }
+        $('#bleScan').onclick = async () => { const button = $('#bleScan'), tb = $('#bluetooth'); button.disabled = true; button.textContent = 'Scanning…'; $('#bluetoothCount').textContent = 'SCANNING'; tb.innerHTML = '<tr><td colspan="7" class="muted">Listening for BLE advertisements for four seconds…</td></tr>'; log('ESP32 Bluetooth scan started...'); try { const x = await api('/api/bluetooth/scan'); tb.innerHTML = ''; x.devices.sort((a, b) => b.rssi - a.rssi).forEach(n => { const tr = document.createElement('tr'), strength = Math.max(4, Math.min(100, 2 * (n.rssi + 100))), type = ({ 0: 'Public', 1: 'Random', 2: 'Public identity', 3: 'Random identity' })[n.address_type] || ('Type ' + n.address_type); tr.innerHTML = '<td></td><td><div class="bars"><i style="width:' + strength + '%"></i></div></td><td></td><td></td><td></td><td class="vendor"></td><td></td>'; tr.children[0].textContent = n.name; tr.children[2].textContent = radioQuality(n.rssi) + ' (' + n.rssi + ')'; tr.children[3].textContent = n.address; tr.children[4].textContent = type; tr.children[5].textContent = ouiInfo(n.address, n.address_type); tr.children[6].textContent = n.connectable ? 'Connectable' : 'Beacon'; tb.appendChild(tr) }); if (!x.devices.length) tb.innerHTML = '<tr><td colspan="7" class="muted">Scan completed successfully, but no BLE advertisements were detected.</td></tr>'; $('#bluetoothCount').textContent = x.devices.length + ' DETECTED'; log('Bluetooth scan complete: ' + x.devices.length + ' devices', 'ok') } catch (error) { $('#bluetoothCount').textContent = 'SCAN FAILED'; tb.innerHTML = '<tr><td colspan="7" class="muted"></td></tr>'; tb.firstElementChild.firstElementChild.textContent = 'BLE scan failed: ' + error.message; } finally { button.disabled = false; button.textContent = 'Scan from ESP32' } };
+        function chooseOui() { $('#ouiFile').click() } $('#drawerImportOui').onclick = chooseOui; $('#ouiFile').onchange = async e => { const file = e.target.files[0]; if (file) try { await importOui(file) } catch (error) { log(error.message, 'err'); toast('OUI IMPORT FAILED') } e.target.value = '' };
+        $('#clearOui').onclick = async () => { try { await deleteOuiDatabase(); $('#ouiStatus').textContent = 'No OUI database loaded.'; $('#ouiHint').textContent = 'OUI database cleared. Import oui.csv to identify eligible public MAC prefixes.'; toast('OUI DATABASE CLEARED') } catch (error) { toast('COULD NOT CLEAR OUI DATA'); log(error.message, 'err') } };
+        $('#resetBrowserData').onclick = async () => { if (!confirm('Clear the saved OUI database and all dashboard browser settings? The ESP32 will not be erased.')) return; try { await deleteOuiDatabase(); localStorage.clear(); sessionStorage.clear(); toast('BROWSER DATA CLEARED'); setTimeout(() => location.reload(), 500) } catch (error) { toast('RESET FAILED'); log(error.message, 'err') } };
+        $('#resetBoard').onclick = async () => { if (!confirm('Restart the ESP32 board now?')) return; $('#resetBoard').disabled = true; $('#resetBoard').textContent = 'Restarting…'; try { await api('/api/reset', {}); closeDrawer(); $('#link').textContent = 'RESTARTING'; log('Board restart requested', 'ok'); setTimeout(() => location.reload(), 5000) } catch (error) { $('#resetBoard').disabled = false; $('#resetBoard').textContent = 'Restart board' } };
+        $('#gpioUnlock').onclick = async () => { if (expertUnlocked) { const result = await api('/api/gpio/unlock', { unlocked: false }); updatePinSafety(result.allowed_gpio_pins, result.hard_blocked_gpio_pins, false); toast('EXPERT GPIOs LOCKED'); return } const phrase = prompt('Expert mode can disrupt boot or serial communication. Critical pins remain blocked. Type UNLOCK to continue.'); if (phrase !== 'UNLOCK') { toast('UNLOCK CANCELLED'); return } const result = await api('/api/gpio/unlock', { unlocked: true }); updatePinSafety(result.allowed_gpio_pins, result.hard_blocked_gpio_pins, true); toast('EXPERT GPIOs UNLOCKED'); log('Temporary expert GPIO mode enabled', 'err') };
+        function closeDrawer() { document.body.classList.remove('drawer-open') } $('#settingsButton').onclick = () => document.body.classList.add('drawer-open'); $('#closeSettings').onclick = closeDrawer; $('#backdrop').onclick = closeDrawer; document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer() });
+        $('#printReport').onclick = () => { const orientation = $('#printOrientation').value, style = document.createElement('style'); style.id = 'dynamicPrint'; style.textContent = '@page{size:' + orientation + ';margin:10mm}'; document.querySelector('#dynamicPrint')?.remove(); document.head.appendChild(style); closeDrawer(); setTimeout(() => window.print(), 100) };
+        async function pollGpio() { if (!document.hidden) { try { const response = await fetch('/api/gpio/status', { cache: 'no-store' }); if (response.ok) { const state = await response.json(); updatePinSafety(state.allowed_gpio_pins, state.hard_blocked_gpio_pins, state.unsafe_gpio_unlocked); updatePinStates(state.gpio) } } catch (error) { } } setTimeout(pollGpio, 900) }
+        loadOuiDatabase(); status(); setInterval(status, 5000); pollGpio();
+    </script>
+</body>
+
+</html>
