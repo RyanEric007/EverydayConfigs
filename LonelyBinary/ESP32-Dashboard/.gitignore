@@ -1,6 +1,0 @@
-# Do not commit your private credentials after editing this file.
-secrets.py
-
-.DS_Store
-__pycache__/
-*.py[cod]
