@@ -103,6 +103,10 @@ alias mv='mv -i'
 alias grep='grep --color=auto'
 alias q='exit'
 
+# macOS used `u` for brew update/upgrade/cleanup.
+# Omarchy's updater is the equivalent: packages, AUR, mise, prune.
+alias u='omarchy update'
+
 
 ##### User-only settings
 
@@ -118,7 +122,9 @@ if [[ $IS_ROOT -eq 0 ]]; then
 
     alias myip='curl -sS --max-time 5 https://checkip.amazonaws.com'
 
-    lip() {
+    # macOS zshrc used `lip` for the LAN address. Omarchy already uses
+    # `lip` to list SSH local-forwards, so the IP helper is `localip`.
+    localip() {
         if ! command -v ip >/dev/null 2>&1; then
             echo "Error: ip is required."
             return 1
