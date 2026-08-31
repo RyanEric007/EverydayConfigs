@@ -1,0 +1,219 @@
+# Shared by the user account and root (sudo su sources this file).
+# Omarchy environment (OMARCHY_PATH + PATH), needed even for non-interactive shells
+[[ -r /usr/share/omarchy/default/bash/env-bootstrap ]] && source /usr/share/omarchy/default/bash/env-bootstrap
+
+# If not running interactively, don't do anything else (leave this above the rc source)
+[[ $- != *i* ]] && return
+
+# All the default Omarchy aliases and functions
+# (don't mess with these directly, just overwrite them here!)
+source "$OMARCHY_PATH/default/bash/rc"
+
+# Add your own exports, aliases, and functions here.
+#
+# Make an alias for invoking commands you use constantly
+# alias p='python'
+
+# Same eza look as `ls -la` (icons, colors, columns); newest at the bottom.
+alias ll='ls -a --sort=modified'
+
+
+##### =========================================================
+##### EverydayConfigs-inspired interactive extras (Linux / bash)
+##### Adapted from RyanEric007/EverydayConfigs macOS .zshrc
+##### =========================================================
+
+if [[ $EUID -eq 0 ]]; then
+    IS_ROOT=1
+else
+    IS_ROOT=0
+fi
+
+# Red two-line prompt as root (sudo su / sudo -s / sudo -i).
+if [[ $IS_ROOT -eq 1 ]]; then
+    if [[ -r /home/omarchy/.config/starship-root.toml ]]; then
+        export STARSHIP_CONFIG=/home/omarchy/.config/starship-root.toml
+    elif [[ -r "$HOME/.config/starship-root.toml" ]]; then
+        export STARSHIP_CONFIG="$HOME/.config/starship-root.toml"
+    fi
+fi
+
+
+##### PATH
+
+if [[ $IS_ROOT -eq 0 && -d "$HOME/.grok/bin" ]]; then
+    case ":$PATH:" in
+        *":$HOME/.grok/bin:"*) ;;
+        *) PATH="$HOME/.grok/bin:$PATH" ;;
+    esac
+fi
+
+if [[ $IS_ROOT -eq 0 && -d "$HOME/.lmstudio/bin" ]]; then
+    case ":$PATH:" in
+        *":$HOME/.lmstudio/bin:"*) ;;
+        *) PATH="$HOME/.lmstudio/bin:$PATH" ;;
+    esac
+fi
+
+export PATH
+
+
+##### History (XDG + share across terminals)
+
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
+mkdir -p "$XDG_CACHE_HOME/bash"
+
+export HISTFILE="$XDG_CACHE_HOME/bash/history"
+export HISTSIZE=50000
+export HISTFILESIZE=50000
+export HISTCONTROL=ignoreboth:erasedups
+shopt -s histappend
+shopt -s cmdhist
+
+# Seed the XDG history file from the old default location once.
+if [[ ! -s "$HISTFILE" && -r "$HOME/.bash_history" ]]; then
+    cp -a "$HOME/.bash_history" "$HISTFILE"
+fi
+
+
+##### Shell options
+
+set -o pipefail
+shopt -s checkwinsize
+shopt -s globstar 2>/dev/null || true
+
+
+##### Prompt hooks (Starship still owns PS1)
+
+everyday_precmd() {
+    history -a
+    history -n
+    printf '\033]0;%s@%s: %s\007' "$USER" "${HOSTNAME%%.*}" "${PWD/#$HOME/~}"
+}
+starship_precmd_user_func=everyday_precmd
+
+
+##### Aliases (only fill gaps — do not clobber Omarchy's c/h/ls)
+
+alias ..='cd ..'
+alias ...='cd ../..'
+alias rm='rm -i'
+alias cp='cp -i'
+alias mv='mv -i'
+alias grep='grep --color=auto'
+alias q='exit'
+
+
+##### User-only settings
+
+if [[ $IS_ROOT -eq 0 ]]; then
+    export PAGER="${PAGER:-less}"
+
+    alias py='python3'
+    if command -v ipython3 >/dev/null 2>&1; then
+        alias ipy='ipython3'
+    elif command -v ipython >/dev/null 2>&1; then
+        alias ipy='ipython'
+    fi
+
+    alias myip='curl -sS --max-time 5 https://checkip.amazonaws.com'
+
+    lip() {
+        if ! command -v ip >/dev/null 2>&1; then
+            echo "Error: ip is required."
+            return 1
+        fi
+        ip -4 -o addr show scope global |
+            awk '$2 !~ /^(docker|br-|veth|virbr|cni|flannel)/ {
+                     gsub(/\/.*/, "", $4)
+                     printf "%-12s %s\n", $2, $4
+                 }'
+    }
+
+    ports() {
+        if command -v ss >/dev/null 2>&1; then
+            ss -tulpn
+        elif command -v lsof >/dev/null 2>&1; then
+            lsof -i -P -n | grep LISTEN
+        else
+            echo "Error: ss or lsof is required."
+            return 1
+        fi
+    }
+fi
+
+
+##### Tailscale helpers
+
+tsips() {
+    if ! command -v jq >/dev/null 2>&1; then
+        echo "Error: jq is required."
+        return 1
+    fi
+
+    if ! command -v tailscale >/dev/null 2>&1; then
+        echo "Error: tailscale command not found."
+        return 1
+    fi
+
+    printf "%-20s %-18s %-40s\n" "HOST" "IPv4" "IPv6"
+    printf "%-20s %-18s %-40s\n" "----" "----" "----"
+
+    tailscale status --json |
+        jq -r '
+            .Peer
+            | to_entries[]
+            | [
+                .value.HostName,
+                ([.value.TailscaleIPs[]? | select(startswith("100."))][0] // "-"),
+                ([.value.TailscaleIPs[]? | select(startswith("fd7a:"))][0] // "-")
+              ]
+            | @tsv
+        ' |
+        while IFS=$'\t' read -r host ipv4 ipv6; do
+            printf "%-20s %-18s %-40s\n" "$host" "$ipv4" "$ipv6"
+        done
+}
+
+tsme() {
+    if ! command -v jq >/dev/null 2>&1; then
+        echo "Error: jq is required."
+        return 1
+    fi
+
+    if ! command -v tailscale >/dev/null 2>&1; then
+        echo "Error: tailscale command not found."
+        return 1
+    fi
+
+    printf "%-20s %-18s %-40s\n" "HOST" "IPv4" "IPv6"
+    printf "%-20s %-18s %-40s\n" "----" "----" "----"
+
+    tailscale status --json |
+        jq -r '
+            .Self
+            | [
+                .HostName,
+                ([.TailscaleIPs[]? | select(startswith("100."))][0] // "-"),
+                ([.TailscaleIPs[]? | select(startswith("fd7a:"))][0] // "-")
+              ]
+            | @tsv
+        ' |
+        while IFS=$'\t' read -r host ipv4 ipv6; do
+            printf "%-20s %-18s %-40s\n" "$host" "$ipv4" "$ipv6"
+        done
+}
+
+tsping() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: tsping <hostname>"
+        return 1
+    fi
+
+    if ! command -v tailscale >/dev/null 2>&1; then
+        echo "Error: tailscale command not found."
+        return 1
+    fi
+
+    tailscale ping "$1"
+}
